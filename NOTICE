@@ -1,0 +1,12 @@
+Managed AutoML API
+Copyright (c) 2026 AutoML API authors. All rights reserved.
+
+This distribution includes third-party Python packages. Their copyright and
+license terms remain with their respective authors and can be inspected from
+the installed Python distribution metadata. Generate and review an SBOM before
+each external release.
+
+This 0.7.0 package is a single-node preview. It does not itself provide a
+production identity provider, TLS termination, high availability, or a secure
+model-serving sandbox. Dataset content and generated model artifacts must be
+treated as untrusted input at every integration boundary.

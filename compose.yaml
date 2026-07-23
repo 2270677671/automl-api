@@ -1,0 +1,60 @@
+services:
+  automl-api:
+    build:
+      context: .
+      target: runtime
+      args:
+        PIP_INDEX_URL: "${AUTOML_PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+        PYTHON_BASE_IMAGE: "${AUTOML_PYTHON_BASE_IMAGE:-docker.m.daocloud.io/library/python:3.12-slim}"
+    image: "${AUTOML_IMAGE:-managed-automl-api:0.7.0}"
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${AUTOML_BIND_PORT:-8000}:8000"
+    environment:
+      AUTOML_AUTH_MODE: "${AUTOML_AUTH_MODE:?set AUTOML_AUTH_MODE=production in .env}"
+      AUTOML_AUTOGLUON_TIME_LIMIT_SECONDS: "${AUTOML_AUTOGLUON_TIME_LIMIT_SECONDS:-20}"
+      AUTOML_BACKEND_WORK_DIR: "/var/lib/automl/backend-work"
+      AUTOML_CURSOR_SECRET: "${AUTOML_CURSOR_SECRET:?set AUTOML_CURSOR_SECRET in .env}"
+      AUTOML_HOST: "0.0.0.0"
+      AUTOML_JWT_AUDIENCE: "${AUTOML_JWT_AUDIENCE:?set AUTOML_JWT_AUDIENCE in .env}"
+      AUTOML_JWT_ISSUER: "${AUTOML_JWT_ISSUER:?set AUTOML_JWT_ISSUER in .env}"
+      AUTOML_JWT_KID: "${AUTOML_JWT_KID:-default}"
+      AUTOML_JWT_KEYS: "${AUTOML_JWT_KEYS:-}"
+      AUTOML_JWT_LEEWAY_SECONDS: "${AUTOML_JWT_LEEWAY_SECONDS:-30}"
+      AUTOML_JWT_SECRET: "${AUTOML_JWT_SECRET:-}"
+      AUTOML_LOG_LEVEL: "${AUTOML_LOG_LEVEL:-info}"
+      AUTOML_MAX_ACTIVE_RUNS_PER_TENANT: "${AUTOML_MAX_ACTIVE_RUNS_PER_TENANT:-4}"
+      AUTOML_MAX_COMPUTE_CREDITS: "${AUTOML_MAX_COMPUTE_CREDITS:-20}"
+      AUTOML_MAX_DATASET_BYTES: "${AUTOML_MAX_DATASET_BYTES:-104857600}"
+      AUTOML_MAX_STORAGE_BYTES_PER_TENANT: "${AUTOML_MAX_STORAGE_BYTES_PER_TENANT:-1073741824}"
+      AUTOML_MAX_TRIALS_PER_RUN: "${AUTOML_MAX_TRIALS_PER_RUN:-20}"
+      AUTOML_MAX_UPLOAD_PART_BYTES: "${AUTOML_MAX_UPLOAD_PART_BYTES:-104857600}"
+      AUTOML_MAX_WALL_TIME_SECONDS: "${AUTOML_MAX_WALL_TIME_SECONDS:-3600}"
+      AUTOML_PORT: "8000"
+      AUTOML_STATE_DIR: "/var/lib/automl"
+      AUTOML_TICKET_SECRET: "${AUTOML_TICKET_SECRET:?set AUTOML_TICKET_SECRET in .env}"
+      AUTOML_TABPFN_DEVICE: "${AUTOML_TABPFN_DEVICE:-cpu}"
+      AUTOML_TABPFN_LICENSE_ACCEPTED: "${AUTOML_TABPFN_LICENSE_ACCEPTED:-false}"
+      AUTOML_TABPFN_MODEL_PATH: "${AUTOML_TABPFN_MODEL_PATH:-}"
+      MKL_NUM_THREADS: "${AUTOML_ML_THREADS:-1}"
+      OMP_NUM_THREADS: "${AUTOML_ML_THREADS:-1}"
+      OPENBLAS_NUM_THREADS: "${AUTOML_ML_THREADS:-1}"
+      TABPFN_MODEL_CACHE_DIR: "/var/lib/automl/tabpfn-cache"
+      TABPFN_TOKEN: "${TABPFN_TOKEN:-}"
+    volumes:
+      - automl-state:/var/lib/automl
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    cpus: "${AUTOML_CPU_LIMIT:-2.0}"
+    mem_limit: "${AUTOML_MEMORY_LIMIT:-4g}"
+    stop_grace_period: 30s
+
+volumes:
+  automl-state:

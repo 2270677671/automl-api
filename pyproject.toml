@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "managed-automl-skeleton"
+version = "0.7.0"
+description = "Local durable Managed AutoML execution API"
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "autogluon.tabular>=1.5,<1.6",
+  "anyio>=4.4,<5",
+  "fastapi>=0.115,<1",
+  "joblib>=1.4,<2",
+  "numpy>=1.26,<3",
+  "pandas>=2.2,<4",
+  "pyarrow>=16,<24",
+  "pydantic>=2.10,<3",
+  "scikit-learn>=1.5,<2",
+  "tabpfn>=8.1,<8.2",
+  "threadpoolctl>=3.5,<4",
+  "uvicorn>=0.32,<1",
+]
+
+[project.optional-dependencies]
+autogluon = [
+  "autogluon.tabular>=1.5,<1.6",
+]
+tabpfn = [
+  "tabpfn>=8.1,<8.2",
+]
+all-backends = [
+  "autogluon.tabular>=1.5,<1.6",
+  "tabpfn>=8.1,<8.2",
+]
+dev = [
+  "build>=1.2,<2",
+  "httpx>=0.27,<1",
+  "pytest>=8,<10",
+  "ruff>=0.12,<1",
+]
+
+[project.scripts]
+automl-api = "automl_api.__main__:main"
+
+[tool.setuptools]
+packages = ["automl_api", "automl_api.backends", "automl_api._contracts"]
+package-dir = {automl_api = "apps/api/src/automl_api", "automl_api._contracts" = "openapi"}
+
+[tool.setuptools.package-data]
+"automl_api._contracts" = ["*.yaml"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+pythonpath = ["apps/api/src", "packages/python_sdk/src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
