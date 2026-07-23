@@ -163,10 +163,14 @@ def _copy_inputs(bundle: Path, api_wheel: Path, sdk_wheel: Path) -> None:
         "compose.yaml": "compose.yaml",
         ".dockerignore": ".dockerignore",
         ".env.example": ".env.example",
+        ".env.production.example": ".env.production.example",
+        ".github/workflows/ci.yml": ".github/workflows/ci.yml",
         "docs/external-agent-integration.md": "docs/external-agent-integration.md",
         "docs/api-usage.md": "docs/api-usage.md",
         "docs/api-route-reference.md": "docs/api-route-reference.md",
+        "docs/complete-api-design.md": "docs/complete-api-design.md",
         "docs/framework-backends.md": "docs/framework-backends.md",
+        "docs/production-delivery.md": "docs/production-delivery.md",
         "docs/test-report-0.7.0.md": "docs/test-report-0.7.0.md",
     }
     for source_name, destination_name in files.items():

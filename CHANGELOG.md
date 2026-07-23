@@ -3,6 +3,12 @@
 All notable changes to this project are documented here. Versions follow
 Semantic Versioning for the public HTTP and Python SDK contracts.
 
+## Unreleased
+
+- Added production delivery guidance, a complete v1 API design document, a production environment
+  template, and GitHub Actions CI coverage for linting, OpenAPI generation, tests, and release
+  input verification.
+
 ## 0.7.0 - 2026-07-24
 
 - Added built-in scikit-learn, AutoGluon Tabular, and TabPFN execution backends behind one

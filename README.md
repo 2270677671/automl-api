@@ -107,6 +107,11 @@ For partner packaging, set `AUTOML_AUTH_MODE=production` and provide `AUTOML_JWT
 or weak. Every public operation requires its exact scope:
 `automl:operation:<operationId>`.
 
+Production delivery is intentionally gate-based. The current image is suitable for partner
+integration and controlled single-node trials; full production exposure additionally requires the
+identity, DLP, RLS, object-storage, worker-isolation, webhook, approval, deletion, model-registry,
+observability, and backup gates described in `docs/production-delivery.md`.
+
 ## Python SDK quick path
 
 The high-level SDK owns single-part streaming upload, local hashing, upload finalization, idempotency
@@ -249,11 +254,12 @@ deletion lookups return `404` because no such production resources are registere
 
 See [docs/api-usage.md](docs/api-usage.md) for the API workflow and examples,
 [docs/api-route-reference.md](docs/api-route-reference.md) for per-route usage,
+[docs/complete-api-design.md](docs/complete-api-design.md) for the full v1 API design,
 [docs/external-agent-integration.md](docs/external-agent-integration.md) for the platform boundary,
 [docs/framework-backends.md](docs/framework-backends.md) for the scikit-learn/AutoGluon/TabPFN
-backend contracts, [docs/test-report-0.7.0.md](docs/test-report-0.7.0.md) for the itemized
-verification report, and [openapi/automl-api.yaml](openapi/automl-api.yaml) for the canonical
-schema.
+backend contracts, [docs/production-delivery.md](docs/production-delivery.md) for the production
+handoff gates, [docs/test-report-0.7.0.md](docs/test-report-0.7.0.md) for the itemized verification
+report, and [openapi/automl-api.yaml](openapi/automl-api.yaml) for the canonical schema.
 
 ## Verify
 
