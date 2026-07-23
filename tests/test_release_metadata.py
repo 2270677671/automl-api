@@ -59,7 +59,8 @@ def test_sdk_distribution_declares_and_carries_partner_metadata() -> None:
     document = tomllib.loads((sdk_root / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert document["project"]["readme"] == "README.md"
-    assert document["project"]["license"] == {"file": "LICENSE"}
+    assert document["project"]["license"] == "LicenseRef-Proprietary"
+    assert document["project"]["license-files"] == ["LICENSE", "NOTICE"]
     assert (sdk_root / "README.md").is_file()
     assert (sdk_root / "LICENSE").read_bytes() == (ROOT / "LICENSE").read_bytes()
     assert (sdk_root / "NOTICE").is_file()
