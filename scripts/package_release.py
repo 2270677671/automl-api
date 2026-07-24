@@ -97,6 +97,9 @@ def _verify_versions(version: str) -> None:
         ROOT / "compose.gpu.yaml": [
             f"AUTOML_GPU_IMAGE:-managed-automl-api:{version}-cuda"
         ],
+        ROOT / "compose.gpu-direct.yaml": [
+            f"AUTOML_GPU_IMAGE:-managed-automl-api:{version}-cuda"
+        ],
         ROOT / "openapi" / "automl-api.yaml": [f"  version: {version}"],
         ROOT / "openapi" / "automl-agent-tools.yaml": [f"  version: {version}"],
         ROOT / "CHANGELOG.md": [f"## {version} - "],
@@ -165,6 +168,7 @@ def _copy_inputs(bundle: Path, api_wheel: Path, sdk_wheel: Path) -> None:
         "Dockerfile": "Dockerfile",
         "compose.yaml": "compose.yaml",
         "compose.gpu.yaml": "compose.gpu.yaml",
+        "compose.gpu-direct.yaml": "compose.gpu-direct.yaml",
         ".dockerignore": ".dockerignore",
         ".env.example": ".env.example",
         ".env.gpu.example": ".env.gpu.example",

@@ -103,6 +103,21 @@ deployment has accepted the applicable model-weight license. TabPFN also require
 process-local `TABPFN_TOKEN` for approved first-use download or an approved checkpoint mounted in
 the persistent state volume and selected with `AUTOML_TABPFN_MODEL_PATH`.
 
+On a Linux host where the NVIDIA driver works but Container Toolkit cannot yet be installed,
+`compose.gpu-direct.yaml` provides an explicit single-GPU compatibility path. It maps the NVIDIA
+device nodes and read-only driver libraries without changing the host. Confirm the driver library
+paths in `.env.gpu` first, then use this override instead of `compose.gpu.yaml`:
+
+```bash
+readlink -f /usr/lib64/libcuda.so.1
+readlink -f /usr/lib64/libnvidia-ml.so.1
+docker compose --env-file .env --env-file .env.gpu \
+  -f compose.yaml -f compose.gpu-direct.yaml up -d --no-build
+```
+
+This compatibility profile is Linux- and host-driver-specific, exposes one GPU, and does not
+replace Container Toolkit for portable partner deployments.
+
 ## Build a partner delivery bundle
 
 Generate a version-checked bundle containing both wheels, the canonical and active Agent OpenAPI

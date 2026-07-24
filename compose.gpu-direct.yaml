@@ -1,0 +1,19 @@
+# Linux compatibility path for a host with a working NVIDIA driver but no
+# NVIDIA Container Toolkit. Prefer compose.gpu.yaml when the toolkit is available.
+services:
+  automl-api:
+    build:
+      args:
+        TORCH_FIND_LINKS: "${AUTOML_GPU_TORCH_FIND_LINKS:-https://download.pytorch.org/whl/cu130/torch/}"
+        TORCH_VERSION: "${AUTOML_GPU_TORCH_VERSION:-2.13.0+cu130}"
+    image: "${AUTOML_GPU_IMAGE:-managed-automl-api:0.7.0-cuda}"
+    environment:
+      AUTOML_TABPFN_DEVICE: "${AUTOML_TABPFN_DEVICE:-cuda}"
+      LD_LIBRARY_PATH: "/opt/nvidia"
+    devices:
+      - "/dev/nvidia0:/dev/nvidia0"
+      - "/dev/nvidiactl:/dev/nvidiactl"
+      - "/dev/nvidia-uvm:/dev/nvidia-uvm"
+    volumes:
+      - "${NVIDIA_LIBCUDA_PATH:-/usr/lib64/libcuda.so.1}:/opt/nvidia/libcuda.so.1:ro"
+      - "${NVIDIA_LIBNVIDIA_ML_PATH:-/usr/lib64/libnvidia-ml.so.1}:/opt/nvidia/libnvidia-ml.so.1:ro"

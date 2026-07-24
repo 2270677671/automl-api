@@ -47,6 +47,8 @@ def test_release_versions_remain_in_lockstep() -> None:
     assert f"AUTOML_IMAGE:-managed-automl-api:{api_version}" in compose
     gpu_compose = (ROOT / "compose.gpu.yaml").read_text(encoding="utf-8")
     assert f"AUTOML_GPU_IMAGE:-managed-automl-api:{api_version}-cuda" in gpu_compose
+    direct_gpu_compose = (ROOT / "compose.gpu-direct.yaml").read_text(encoding="utf-8")
+    assert f"AUTOML_GPU_IMAGE:-managed-automl-api:{api_version}-cuda" in direct_gpu_compose
     assert f"## {api_version} -" in (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
 

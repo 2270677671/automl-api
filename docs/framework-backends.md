@@ -73,6 +73,12 @@ docker compose --env-file .env --env-file .env.gpu \
   python -c 'import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())'
 ```
 
+For a controlled single-node Linux deployment that cannot install Container Toolkit immediately,
+`compose.gpu-direct.yaml` maps `/dev/nvidia0`, `/dev/nvidiactl`, `/dev/nvidia-uvm`, `libcuda.so.1`,
+and `libnvidia-ml.so.1` explicitly. This is a host-driver-specific compatibility path, not the
+portable default. It must pass both `torch.cuda.is_available()` and a real CUDA tensor operation
+before the API is switched to it.
+
 TabPFN's native `save_fit_state` contains the development feature matrix, labels, preprocessing
 state, and categorical vocabulary. That conflicts with this API's artifact data boundary. The
 backend therefore performs real training and evaluation but returns only a small metadata JSON with
