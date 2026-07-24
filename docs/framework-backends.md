@@ -42,16 +42,21 @@ AutoGluon 1.5 is Apache-2.0 and supports Python `>=3.10,<3.14`. See the
 
 ## TabPFN
 
-TabPFN is not credential-free. The backend reports `available=true` only when all of these are true:
+**Built with PriorLabs-TabPFN.**
+
+The backend reports `available=true` only when all of these are true:
 
 1. the `tabpfn` package is importable;
 2. `AUTOML_TABPFN_LICENSE_ACCEPTED=true` is set by the operator;
-3. either `TABPFN_TOKEN` is present for headless first-use download or
-   `AUTOML_TABPFN_MODEL_PATH` points to an existing checkpoint.
+3. model access is provided by both cached public-v2 task checkpoints, `TABPFN_TOKEN`, or approved
+   local checkpoint paths.
 
 The token remains process-local and is never copied into Run records, output payloads, logs, or
 artifacts. For an offline deployment, prefetch an approved checkpoint into a protected volume and
 set `AUTOML_TABPFN_MODEL_PATH`.
+Set `AUTOML_TABPFN_MODEL_SOURCE=public-v2` to use the official public v2 classifier and regressor
+files in `TABPFN_MODEL_CACHE_DIR`; both must be present. The default `auto` source retains TabPFN
+8.1's credentialed current-model behavior.
 The Compose profile sets `TABPFN_MODEL_CACHE_DIR=/var/lib/automl/tabpfn-cache`, which is on the
 persistent state volume instead of the container's read-only filesystem.
 

@@ -31,6 +31,11 @@ _DISTRIBUTION = "tabpfn"
 _CPU_MAX_ROWS = 1_000
 _GPU_MAX_ROWS = 100_000
 _MAX_FEATURES = 2_000
+_MODEL_SOURCES = {"auto", "public-v2"}
+_PUBLIC_V2_FILENAMES: dict[TaskType, str] = {
+    "BINARY_CLASSIFICATION": "tabpfn-v2-classifier.ckpt",
+    "REGRESSION": "tabpfn-v2-regressor.ckpt",
+}
 
 
 def _installed_version() -> str | None:
@@ -42,6 +47,51 @@ def _installed_version() -> str | None:
 
 def _enabled(value: str | None) -> bool:
     return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _model_source() -> str:
+    return os.environ.get("AUTOML_TABPFN_MODEL_SOURCE", "auto").strip().lower() or "auto"
+
+
+def _public_v2_paths() -> dict[TaskType, Path]:
+    cache = Path(
+        os.environ.get("TABPFN_MODEL_CACHE_DIR", "~/.cache/tabpfn").strip() or "~/.cache/tabpfn"
+    ).expanduser()
+    return {task_type: cache / filename for task_type, filename in _PUBLIC_V2_FILENAMES.items()}
+
+
+def _model_access_status(source: str) -> tuple[bool, bool]:
+    """Return whether model access is ready and whether missing local paths caused failure."""
+    if source == "public-v2":
+        return all(path.is_file() for path in _public_v2_paths().values()), True
+
+    specific = {
+        "BINARY_CLASSIFICATION": os.environ.get("AUTOML_TABPFN_CLASSIFIER_MODEL_PATH", "").strip(),
+        "REGRESSION": os.environ.get("AUTOML_TABPFN_REGRESSOR_MODEL_PATH", "").strip(),
+    }
+    if any(specific.values()):
+        ready = all(value and Path(value).expanduser().is_file() for value in specific.values())
+        return ready, True
+
+    configured = os.environ.get("AUTOML_TABPFN_MODEL_PATH", "").strip()
+    if configured:
+        return Path(configured).expanduser().is_file(), True
+
+    return bool(os.environ.get("TABPFN_TOKEN", "").strip()), False
+
+
+def _model_path_for_task(task_type: TaskType, source: str) -> str:
+    if source == "public-v2":
+        return str(_public_v2_paths()[task_type])
+    variable = (
+        "AUTOML_TABPFN_CLASSIFIER_MODEL_PATH"
+        if task_type == "BINARY_CLASSIFICATION"
+        else "AUTOML_TABPFN_REGRESSOR_MODEL_PATH"
+    )
+    configured = os.environ.get(variable, "").strip()
+    if not configured:
+        configured = os.environ.get("AUTOML_TABPFN_MODEL_PATH", "").strip()
+    return str(Path(configured).expanduser()) if configured else "auto"
 
 
 class _TabPFNPreprocessor:
@@ -221,17 +271,16 @@ class TabPFNBackend:
         importable = importlib.util.find_spec("tabpfn") is not None
         installed = version is not None and importable
         license_accepted = _enabled(os.environ.get("AUTOML_TABPFN_LICENSE_ACCEPTED"))
-        configured_model_path = os.environ.get("AUTOML_TABPFN_MODEL_PATH")
-        valid_model_path = (
-            bool(configured_model_path) and Path(configured_model_path).expanduser().is_file()
-        )
-        model_access = valid_model_path or bool(os.environ.get("TABPFN_TOKEN", "").strip())
+        model_source = _model_source()
+        model_access, local_paths_expected = _model_access_status(model_source)
         available = installed and license_accepted and model_access
         if not installed:
             unavailable_reason = "STANDARD_DEPENDENCY_NOT_INSTALLED"
         elif not license_accepted:
             unavailable_reason = "MODEL_LICENSE_NOT_ACCEPTED"
-        elif configured_model_path and not valid_model_path:
+        elif model_source not in _MODEL_SOURCES:
+            unavailable_reason = "MODEL_SOURCE_INVALID"
+        elif local_paths_expected and not model_access:
             unavailable_reason = "MODEL_PATH_NOT_FOUND"
         elif not model_access:
             unavailable_reason = "MODEL_ACCESS_NOT_CONFIGURED"
@@ -253,7 +302,7 @@ class TabPFNBackend:
                 },
                 runtime_requirements=(
                     "Operator acceptance of the selected TabPFN model-weight license",
-                    "TABPFN_TOKEN or AUTOML_TABPFN_MODEL_PATH for first-use model access",
+                    "public-v2 cache, TABPFN_TOKEN, or configured checkpoint paths",
                     "Writable model cache; only data-free evaluation metadata is downloadable",
                     "GPU recommended; CPU execution is limited to small datasets",
                     "Wall-time deadline is cooperative between folds, not a hard fit interruption",
@@ -299,13 +348,6 @@ class TabPFNBackend:
                 optional_dependency=descriptor.optional_dependency,
                 reason=descriptor.unavailable_reason,
             )
-        configured_model_path = os.environ.get("AUTOML_TABPFN_MODEL_PATH")
-        if configured_model_path:
-            path = Path(configured_model_path).expanduser()
-            model_path = str(path)
-        else:
-            model_path = "auto"
-
         try:
             from tabpfn import TabPFNClassifier, TabPFNRegressor
         except Exception as error:
@@ -331,6 +373,8 @@ class TabPFNBackend:
             engine_version=ENGINE_VERSION,
         )
         _check_deadline(deadline, stage="after_data_preparation")
+        model_source = _model_source()
+        model_path = _model_path_for_task(prepared.task_type, model_source)
         device = os.environ.get("AUTOML_TABPFN_DEVICE", "cpu").strip() or "cpu"
         max_rows = _CPU_MAX_ROWS if device == "cpu" else _GPU_MAX_ROWS
         if len(prepared.features) > max_rows:
@@ -353,7 +397,9 @@ class TabPFNBackend:
             TabPFNClassifier if prepared.task_type == "BINARY_CLASSIFICATION" else TabPFNRegressor
         )
         config = {
-            "checkpoint": "configured" if configured_model_path else "auto",
+            "checkpoint": model_source
+            if model_source == "public-v2"
+            else ("configured" if model_path != "auto" else "auto"),
             "device": device,
             "n_estimators": n_estimators,
             "fit_mode": "low_memory",

@@ -18,6 +18,7 @@ from automl_api.backends.tabpfn import (
     BackendWallTimeExceededError,
     TabPFNBackend,
     _TabPFNPreprocessor,
+    _model_path_for_task,
 )
 
 
@@ -255,3 +256,27 @@ def test_tabpfn_installed_is_distinct_from_runtime_ready(
     assert descriptor.installed is True
     assert descriptor.available is False
     assert descriptor.unavailable_reason == "MODEL_LICENSE_NOT_ACCEPTED"
+
+
+def test_tabpfn_public_v2_requires_both_task_checkpoints(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: object,
+) -> None:
+    monkeypatch.setattr(tabpfn_module, "_installed_version", lambda: "8.1.0")
+    monkeypatch.setattr(tabpfn_module.importlib.util, "find_spec", lambda _: object())
+    monkeypatch.setenv("AUTOML_TABPFN_LICENSE_ACCEPTED", "true")
+    monkeypatch.setenv("AUTOML_TABPFN_MODEL_SOURCE", "public-v2")
+    monkeypatch.setenv("TABPFN_MODEL_CACHE_DIR", str(tmp_path))
+    classifier = tmp_path / "tabpfn-v2-classifier.ckpt"
+    regressor = tmp_path / "tabpfn-v2-regressor.ckpt"
+    classifier.write_bytes(b"classifier")
+
+    incomplete = TabPFNBackend().descriptor
+    assert incomplete.available is False
+    assert incomplete.unavailable_reason == "MODEL_PATH_NOT_FOUND"
+
+    regressor.write_bytes(b"regressor")
+    ready = TabPFNBackend().descriptor
+    assert ready.available is True
+    assert _model_path_for_task("BINARY_CLASSIFICATION", "public-v2") == str(classifier)
+    assert _model_path_for_task("REGRESSION", "public-v2") == str(regressor)

@@ -11,6 +11,9 @@
 This repository provides an API-first, resumable AutoML workflow and a synchronous Python SDK. In
 the default local profile it can:
 
+**Built with PriorLabs-TabPFN.** TabPFN use is subject to the Prior Labs License and the deployment
+operator's model-weight terms; see [framework backend notes](docs/framework-backends.md).
+
 - stream a real CSV or Parquet file into immutable local storage and verify its size, part ETag, and
   SHA-256 digest;
 - persist API resources, idempotency results, workflow checkpoints, and execution jobs in SQLite;
@@ -102,6 +105,11 @@ Do not set `AUTOML_TABPFN_LICENSE_ACCEPTED=true` until the organization responsi
 deployment has accepted the applicable model-weight license. TabPFN also requires either a
 process-local `TABPFN_TOKEN` for approved first-use download or an approved checkpoint mounted in
 the persistent state volume and selected with `AUTOML_TABPFN_MODEL_PATH`.
+
+After license acceptance, `AUTOML_TABPFN_MODEL_SOURCE=public-v2` selects the official public v2
+classification and regression checkpoints from `TABPFN_MODEL_CACHE_DIR`. Both files must be
+prefetched before the manifest reports the backend as available. This avoids retaining a v3 API
+key while keeping the credentialed `auto` and custom checkpoint modes available.
 
 On a Linux host where the NVIDIA driver works but Container Toolkit cannot yet be installed,
 `compose.gpu-direct.yaml` provides an explicit single-GPU compatibility path. It maps the NVIDIA
