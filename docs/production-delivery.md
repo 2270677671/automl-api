@@ -8,28 +8,40 @@
 | 目标读者 | 平台负责人、后端工程、Agent 平台集成团队、运维/SRE、安全与合规评审人员 |
 | 当前代码版本 | 0.7.0 |
 | 当前实现 profile | `local-durable-tabular-v1` |
-| 生产交付判断 | API 设计和单节点交付包已具备合作方集成条件；正式生产上线仍需要完成本文列出的生产门禁 |
+| 生产交付判断 | API 设计和单节点交付包具备合作方集成条件；0.7.0 formal profile 固定未就绪，不能用于正式生产上线 |
 
 ## 2. 交付结论
 
 当前仓库已经具备以下可交付能力：
 
-- API-first 的 AutoML 后端，完整公开 OpenAPI 和 Python SDK。
+- API-first 的 AutoML 后端、canonical control-plane OpenAPI 和封装 data-plane 传输的 Python SDK。
 - 外部 Agent 平台接入面：manifest、tool OpenAPI、Agent context 和 canonical action refs。
 - 数据上传、Run 创建、事件观察、结构化中断、回答后恢复、输出、结果和 artifact 下载闭环。
 - 标准 tabular 后端：scikit-learn、AutoGluon Tabular、TabPFN。TabPFN 的真实权重启用受许可、token 或 checkpoint 条件约束。
-- 单机 Docker/Compose 部署、生产模式 fail-closed 配置、非 root 容器、只读文件系统和资源限制。
-- 测试报告、路由手册、后端说明、外部 Agent 集成契约和 release bundle 校验。
+- 单机 Docker/Compose 定义、formal profile fail-closed 配置、非 root 容器、只读文件系统和资源限制。
+- 测试报告、路由手册、后端说明、外部 Agent 集成契约和 release bundle 校验工具。
 
-当前仓库尚未具备以下生产能力：
+Dockerfile 的 formal target 声明以下依赖与控制面预览能力。当前最新工作树的全量 Docker 构建和
+容器 smoke 仍须按第 10 节重新验证，不能引用旧镜像作为本轮证据：
+
+- OIDC/JWKS verifier、PostgreSQL client、S3/KMS client、Webhook HTTP client 等生产依赖。
+- `AUTOML_DEPLOYMENT_PROFILE=production` 下的 `/readyz` hard fail-closed；0.7.0 中即使环境变量
+  齐全也固定返回 `503 production_preflight_failed`。
+- PostgreSQL/RLS bootstrap SQL：`deploy/postgres/001_rls_schema.sql`。
+- Webhook endpoint、outbox delivery 查询、重投、禁用/启用和密钥轮换 API。
+- 生产部署审批 workflow，以及审批通过后的 `ModelCandidate` 注册和结果 manifest。
+- local profile 中会撤销访问并物理删除本地数据集/artifact 字节的 deletion job API。
+
+这些依赖尚未连接到实际请求路径。当前仓库仍需实现并验收：
 
 - 多副本高可用、分布式 worker、PostgreSQL/RLS 和对象存储隔离。
-- 正式 OIDC/JWKS 或 workload identity。
-- 出站 DLP、字段 allowlist、opaque column ID 和租户同意审计。
-- Webhook dispatcher、审批 workflow、删除 saga、模型注册和生产部署门禁。
-- AutoGluon/TabPFN 的进程级硬隔离和硬超时。
+- 出站 DLP 的 PII 回归集、opaque column ID 和租户同意审计。
+- Webhook HTTP dispatcher 的真实投递、重试、死信和告警。
+- AutoGluon/TabPFN 的容器级硬隔离、硬超时和资源压力测试。
 
-因此，0.7.0 可以作为合作方 Agent 平台的嵌入式集成版本和非生产试运行版本；要开放给真实生产租户，需要完成第 11 节上线门禁。
+因此，0.7.0 可以作为合作方 Agent 平台的嵌入式集成版本和非生产试运行版本；formal profile
+在本版本中恒为未就绪。完成第 11 节门禁后仍需发布接入真实 runtime adapter 的新版本，不能仅靠
+修改环境变量解除该门禁。
 
 ## 3. 交付物清单
 
@@ -91,16 +103,20 @@ flowchart LR
 - SQLite 和本地对象目录不能作为多副本生产状态层。
 - 容器内 AutoGluon/TabPFN 仍属于受信代码执行边界，不是强沙箱。
 - 当前 manifest 固定报告 `production_external_llm_safe=false`。
-- 成功 Run 仍返回 `NO_ELIGIBLE_MODEL`，不自动注册或部署模型。
+- 默认 Run 返回 `NO_ELIGIBLE_MODEL`；只有显式设置 `REQUIRE_APPROVAL` 并完成审批才注册
+  `ModelCandidate`，且 API 仍不自动部署在线推理服务。
 
 启动建议：
 
 ```bash
-cp .env.production.example .env
+cp .env.example .env
 openssl rand -hex 32
 docker compose up -d --build
 curl -sS http://127.0.0.1:${AUTOML_BIND_PORT:-8000}/readyz
 ```
+
+这会使用默认 `partner-preview` target。`.env.production.example` 只用于 formal profile 配置审查；
+0.7.0 将该 profile 的 `/readyz` 无条件保持为 `503`，不能用它启动一个被误认为生产就绪的服务。
 
 ### 5.2 目标生产模式：多组件部署
 
@@ -115,14 +131,14 @@ curl -sS http://127.0.0.1:${AUTOML_BIND_PORT:-8000}/readyz
 
 ## 6. 生产配置
 
-生产部署必须设置：
+目标生产实现必须设置以下配置。它们不会解除 0.7.0 formal profile 的固定 `503`：
 
 | 配置 | 要求 |
 | --- | --- |
 | `AUTOML_AUTH_MODE` | 必须为 `production` |
 | `AUTOML_JWT_ISSUER` | 必须等于身份提供方 issuer |
 | `AUTOML_JWT_AUDIENCE` | 必须与调用方 token audience 一致 |
-| `AUTOML_JWT_SECRET` / `AUTOML_JWT_KEYS` | 当前 preview HS256 模式二选一；正式生产建议替换为 OIDC/JWKS |
+| `AUTOML_JWKS_URL` / `AUTOML_JWKS_JSON` | 正式生产二选一，并验证 issuer、audience、kid 和轮换 |
 | `AUTOML_CURSOR_SECRET` | 独立随机密钥，不得与 JWT 或 ticket 密钥复用 |
 | `AUTOML_TICKET_SECRET` | 独立随机密钥，用于 artifact download ticket |
 | `AUTOML_MAX_*` | 按租户和硬件容量设置限额 |
@@ -141,6 +157,10 @@ docker compose config
 docker compose up -d
 curl -fsS http://127.0.0.1:${AUTOML_BIND_PORT:-8000}/readyz
 ```
+
+在 0.7.0 中，最后一步无论配置是否齐全都预期失败并返回
+`503 production_preflight_failed`。只有实际 PostgreSQL/RLS、S3/KMS、DLP、隔离 worker 和
+dispatcher 已接入请求路径并完成验收后的新代码版本，才允许修改该门禁。
 
 ## 7. 安全要求
 
@@ -230,7 +250,7 @@ curl -fsS http://127.0.0.1:${AUTOML_BIND_PORT:-8000}/readyz
 5. 校验 `SHA256SUMS`。
 6. 在隔离环境执行 smoke：
    - `/healthz`
-   - `/readyz`
+   - partner-preview `/readyz` 返回 `200`；formal profile `/readyz` 返回预期的 `503`
    - `/v1/agent/manifest`
    - CSV 上传到 sklearn Run 终态
    - artifact ticket 下载校验
@@ -240,15 +260,15 @@ curl -fsS http://127.0.0.1:${AUTOML_BIND_PORT:-8000}/readyz
 
 | 编号 | 门禁 | 当前状态 | 验收方式 |
 | --- | --- | --- | --- |
-| G-001 | OIDC/JWKS 或 workload identity | 未完成 | 使用真实 IdP 验证 issuer/audience/kid/key rotation |
-| G-002 | PostgreSQL/RLS | 未完成 | 跨租户读取、写入和分页测试全部返回预期 |
-| G-003 | 对象存储/KMS | 未完成 | 上传、finalize、download ticket、Range、hash 验证通过 |
-| G-004 | Worker 隔离与硬超时 | 未完成 | AutoGluon/TabPFN 超时、内存、CPU 和取消测试通过 |
-| G-005 | Agent context DLP | 未完成 | prompt injection 和 PII 回归集通过 |
-| G-006 | Webhook dispatcher | 未完成 | HMAC、重试、死信、重投、禁用/启用测试通过 |
-| G-007 | 审批 workflow | 未完成 | `APPROVAL_REQUIRED` 状态转换和审计通过 |
-| G-008 | 删除 saga | 未完成 | 数据集、派生输出、artifact 和审计保留策略通过 |
-| G-009 | 模型注册和部署门禁 | 未完成 | `ELIGIBLE_MODEL_AVAILABLE` 只在质量/审批通过后出现 |
+| G-001 | OIDC/JWKS 或 workload identity | verifier 已接入；真实 IdP 未验收 | 使用真实 IdP 验证 issuer/audience/kid/key rotation |
+| G-002 | PostgreSQL/RLS | 仅客户端依赖和 bootstrap SQL，运行时仍为 SQLite | 跨租户读取、写入和分页测试全部返回预期 |
+| G-003 | 对象存储/KMS | 仅 boto3 依赖，运行时仍为本地文件 | 上传、finalize、download ticket、Range、hash 验证通过 |
+| G-004 | Worker 隔离与硬超时 | 未完成，运行时仍为进程内 worker | AutoGluon/TabPFN 超时、内存、CPU 和取消测试通过 |
+| G-005 | Agent context DLP | 未完成，配置字符串不等于运行时 DLP | prompt injection 和 PII 回归集通过 |
+| G-006 | Webhook dispatcher | durable outbox/redelivery API 可用；HTTP dispatcher 未实现 | HMAC、重试、死信、重投、禁用/启用测试通过 |
+| G-007 | 审批 workflow | local 控制面可用；生产要求 human actor，完整审计待接入 | 状态转换、过期、身份和审计通过 |
+| G-008 | 删除 saga | local 字节删除和访问撤销可用；外部存储 worker 未实现 | 数据集、派生输出、artifact 和审计保留策略通过 |
+| G-009 | 模型注册和部署门禁 | local `ModelCandidate` 可用；真实质量门禁和部署未实现 | 合格结果只在质量/审批通过后出现 |
 | G-010 | 可观测性/审计/告警 | 未完成 | SLO dashboard、告警和审计查询可用 |
 | G-011 | 备份恢复 | 未完成 | 完整恢复演练通过 |
 | G-012 | 合规与许可证 | 未完成 | AutoGluon/TabPFN/模型权重/数据用途审查完成 |

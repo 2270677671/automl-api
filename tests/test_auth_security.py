@@ -10,6 +10,9 @@ from typing import Annotated, Any
 import pytest
 from fastapi import Depends, FastAPI, Header
 from fastapi.testclient import TestClient
+from cryptography.hazmat.primitives.asymmetric import rsa
+import jwt
+from jwt.algorithms import RSAAlgorithm
 
 from automl_api.app import create_app
 from automl_api.auth import (
@@ -103,6 +106,9 @@ def _set_auth_environment(monkeypatch: pytest.MonkeyPatch, values: dict[str, str
         "AUTOML_JWT_AUDIENCE",
         "AUTOML_JWT_SECRET",
         "AUTOML_JWT_KEYS",
+        "AUTOML_JWKS_JSON",
+        "AUTOML_JWKS_URL",
+        "AUTOML_JWT_ALGORITHMS",
         "AUTOML_JWT_KID",
         "AUTOML_CURSOR_SECRET",
         "AUTOML_TICKET_SECRET",
@@ -234,6 +240,36 @@ def test_valid_jwt_maps_only_verified_identity_and_scope_claims() -> None:
     assert verified.actor_type == "agent"
     assert verified.issuer == ISSUER
     assert verified.key_id == "primary"
+
+
+def test_production_auth_accepts_oidc_jwks_json_without_hs256_secret() -> None:
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_jwk = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
+    public_jwk.update({"kid": "rsa-primary", "alg": "RS256", "use": "sig"})
+    environment = _production_environment()
+    environment.pop("AUTOML_JWT_SECRET")
+    environment["AUTOML_JWKS_JSON"] = json.dumps({"keys": [public_jwk]})
+    environment["AUTOML_JWT_ALGORITHMS"] = "RS256"
+    token = jwt.encode(
+        {
+            "iss": ISSUER,
+            "aud": AUDIENCE,
+            "sub": "agent-platform",
+            "tenant_id": "tenant_signed",
+            "scope": "automl:operation:getRun",
+            "actor_type": "agent",
+            "exp": NOW + 300,
+        },
+        private_key,
+        algorithm="RS256",
+        headers={"kid": "rsa-primary"},
+    )
+
+    principal = authenticate_bearer_token(token, settings=AuthSettings.from_env(environment))
+
+    assert principal.tenant_id == "tenant_signed"
+    assert principal.key_id == "rsa-primary"
+    assert principal.scopes == frozenset({"automl:operation:getRun"})
 
 
 def test_jwt_actor_type_defaults_to_service() -> None:

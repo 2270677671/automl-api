@@ -1,11 +1,12 @@
 # Managed AutoML API
 
 > [!WARNING]
-> Milestone 2 is usable as a single-node local workflow, but it is not production ready. It uses
-> a synthetic development identity, one SQLite-backed worker, a local object directory, and trusted
-> framework artifacts. Here, "durable" only means local state can survive a clean process
-> restart; it does not provide high availability, backups, or disaster recovery. Do not expose this
-> build to untrusted networks or use it for critical workloads or production models.
+> The Dockerfile defines a single-node partner-preview target plus a fail-closed formal production
+> target. The formal target bundles OIDC/JWKS, PostgreSQL, S3/KMS, and Webhook client dependencies,
+> but it does not wire those external runtime adapters. Consequently, in version 0.7.0,
+> `AUTOML_DEPLOYMENT_PROFILE=production` deliberately keeps `/readyz` at `503`
+> regardless of environment configuration. A later code release must wire and validate the external
+> runtime adapters before that hard fail-closed check can be removed.
 
 This repository provides an API-first, resumable AutoML workflow and a synchronous Python SDK. In
 the default local profile it can:
@@ -25,6 +26,8 @@ the default local profile it can:
   and a backend artifact; TabPFN currently returns data-free evaluation metadata rather than a
   loadable model because its native fit state contains development data;
 - download artifacts with expiring tickets, byte ranges, resume support, and integrity checks.
+- manage production-control resources for Webhook endpoints, delivery outbox/redelivery, approval
+  decisions, deletion jobs, and approved `ModelCandidate` records.
 
 The service never calls an LLM. A separate Agent platform may discover this API, read a bounded
 Run context, and invoke the existing versioned operations. The platform owns model selection,
@@ -40,9 +43,15 @@ python3 -m pip install -e '.[dev]'
 automl-api
 ```
 
+The base install includes the scikit-learn backend. To install the two heavier optional backends
+for local development, use `python3 -m pip install -e '.[dev,all-backends]'`. The Docker image
+installs `all-backends` by default.
+
 The API listens on `http://127.0.0.1:8000`. Health and readiness probes are available at
-`/healthz` and `/readyz`; the canonical contract is served at `/openapi.yaml`, and the active
-external-Agent tool contract is served at `/v1/agent/tool-openapi.yaml`.
+`/healthz` and `/readyz`; the canonical control-plane contract is served at `/openapi.yaml`, and
+the active external-Agent tool contract is served at `/v1/agent/tool-openapi.yaml`. Upload and
+artifact-download data-plane URLs are issued by control-plane responses and are intentionally not
+listed as independently constructible OpenAPI operations.
 
 By default, metadata and jobs are stored in `.automl-data/automl.db`, while dataset and artifact
 bytes are stored below `.automl-data/objects`. Set `AUTOML_STATE_DIR` to use another local directory.
@@ -101,16 +110,21 @@ python -m pip install wheels/automl_sdk-0.7.0-py3-none-any.whl
 docker load --input images/managed-automl-api_0.7.0.tar
 ```
 
-For partner packaging, set `AUTOML_AUTH_MODE=production` and provide `AUTOML_JWT_ISSUER`,
-`AUTOML_JWT_AUDIENCE`, `AUTOML_JWT_SECRET` or `AUTOML_JWT_KEYS`, and an independent
-`AUTOML_CURSOR_SECRET`. Production mode fails closed at app startup if any required value is absent
-or weak. Every public operation requires its exact scope:
+For a controlled partner preview, use the default `AUTOML_DEPLOYMENT_PROFILE=partner-preview` and
+configure the authentication mode appropriate to that environment. The formal production target
+sets `AUTOML_DEPLOYMENT_PROFILE=production`; provide OIDC/JWKS (`AUTOML_JWKS_URL` or
+`AUTOML_JWKS_JSON`), `AUTOML_JWT_ISSUER`, `AUTOML_JWT_AUDIENCE`, PostgreSQL/RLS, S3/KMS, DLP,
+Webhook, deletion, model-registry, worker-isolation, `AUTOML_CURSOR_SECRET`, and
+`AUTOML_TICKET_SECRET` configuration. These values are inputs for integration testing; in 0.7.0 they
+cannot make the formal profile ready. `/readyz` always returns `503 production_preflight_failed`
+because the required external runtime adapters are not wired into request execution.
+Every public operation requires its exact scope:
 `automl:operation:<operationId>`.
 
-Production delivery is intentionally gate-based. The current image is suitable for partner
-integration and controlled single-node trials; full production exposure additionally requires the
-identity, DLP, RLS, object-storage, worker-isolation, webhook, approval, deletion, model-registry,
-observability, and backup gates described in `docs/production-delivery.md`.
+Production delivery is intentionally gate-based. The formal image installs client dependencies and
+exposes the control-plane APIs, but dependency presence or environment strings never count as
+runtime readiness. Final exposure requires implementing and validating external identity, DLP,
+RLS, object storage, worker isolation, Webhook dispatcher, observability, and backup gates.
 
 ## Python SDK quick path
 
@@ -163,12 +177,14 @@ needed. Omitting `objective.backend_id` selects the Manifest's `default_backend_
 this profile). Do not infer backend availability from its name: inspect `backends[].available`,
 `capabilities`, and `artifact` before creating a Run.
 
-Every successful M2 training run currently returns `model_disposition=NO_ELIGIBLE_MODEL`. The
-artifact is intentionally evaluation-only because business thresholds, risk approval, production
-eligibility, and deployment gates have not been implemented. Its format depends on the selected
-backend: scikit-learn returns a trusted-store `joblib` pipeline, AutoGluon returns a trusted-store
-`tar.gz` predictor archive, and TabPFN returns data-free JSON evaluation metadata with
-`exportable=false`.
+The default `production_deploy=DISABLED` flow returns
+`model_disposition=NO_ELIGIBLE_MODEL`, so its artifact remains evaluation-only. When a caller sets
+`production_deploy=REQUIRE_APPROVAL`, a successful training Run enters `WAITING_APPROVAL`; an
+explicit approval registers a `ModelCandidate` and returns `ELIGIBLE_MODEL_AVAILABLE`. This is a
+control-plane candidate record, not an inference deployment or a substitute for external quality
+gates. Artifact format depends on the backend: scikit-learn returns a trusted-store `joblib`
+pipeline, AutoGluon returns a trusted-store `tar.gz` predictor archive, and TabPFN returns data-free
+JSON evaluation metadata with `exportable=false`.
 
 ## External Agent platform
 
@@ -238,19 +254,26 @@ supported task/media types, CPU/GPU traits, deterministic behavior, and artifact
 
 The local vertical slice deliberately does not provide:
 
-- production-grade tenant RLS, DLP, encryption/KMS policy, audit controls, or HA identity
-  federation beyond the preview HS256 JWT verifier;
+- a complete external-infrastructure implementation for PostgreSQL/RLS, S3/KMS, production DLP,
+  audit controls, or high-availability identity federation; the image provides fail-closed
+  configuration and dependency gates, while those systems must be validated and operated by the
+  deployer;
 - high availability, multi-process workers, distributed leases, lease heartbeats, or PostgreSQL
   transactional projections;
-- Webhook delivery, approval decisions, model registry lookup, dataset deletion, or deployment;
+- an outbound Webhook HTTP dispatcher, distributed deletion worker, model-serving endpoint, or
+  automated production-quality gate; the API does provide the corresponding Webhook outbox,
+  approval, model-candidate, and deletion control-plane resources;
 - group/time-series/multiclass tasks, relational datasets, arbitrary model search, inference serving,
   or automatic production eligibility;
 - an internal LLM planner (by design), production-safe external LLM data transfer, or an endpoint
   that executes arbitrary Agent-generated tool calls.
 
-The experiment and approval list routes are compatibility placeholders and currently return empty
-pages. Webhook management, approval decisions, and deletion commands return `501`; model and
-deletion lookups return `404` because no such production resources are registered.
+The experiment routes remain compatibility placeholders: listing returns an empty page and a
+specific experiment returns `404`. In contrast, approval decisions, model-candidate lookup,
+dataset deletion jobs, and Webhook endpoint/outbox management are implemented. The local durable
+deletion path revokes access and physically removes local dataset/upload and derived artifact bytes;
+production storage still needs a separate deletion worker. A deployment also needs a dispatcher to
+perform actual outbound Webhook HTTP delivery.
 
 See [docs/api-usage.md](docs/api-usage.md) for the API workflow and examples,
 [docs/api-route-reference.md](docs/api-route-reference.md) for per-route usage,

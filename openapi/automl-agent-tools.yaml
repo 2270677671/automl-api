@@ -5,13 +5,14 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: Managed AutoML Agent Tools API
   version: 0.7.0
-  x-active-implementation-milestone: milestone-2-local-durable
+  x-active-implementation-milestone: milestone-2-local-durable-plus-control-plane
   x-production-ready: false
+  x-production-image-ready: false
   x-implementation-profile:
     persistence: single-node-sqlite-checkpoint
     object-storage: local-filesystem
     execution: single-local-worker
-    authentication: development-synthetic-or-preview-hs256-jwt
+    authentication: development-synthetic-preview-hs256-or-oidc-jwks
     llm-integration: external-agent-platform
     internal-llm-calls: false
   license:
@@ -24,11 +25,15 @@ info:
     编排器、对象存储、实验追踪和 worker 均为内部实现选择，不作为公共契约暴露。
     API 使用四层读取模型：RunSnapshot、RunEvent、OutputResource、RunResult。
 
-    当前激活实现是可重启恢复的单机开发 profile：支持真实 CSV/Parquet 上传、SQLite checkpoint、
-    受限的二分类/回归 scikit-learn 训练、结构化人工中断/继续，以及可校验的 artifact 下载。
-    它仅提供开发合成身份或预览 HS256 JWT，不具备正式 OIDC/JWKS 身份联合、RLS/DLP、HA、
-    Webhook、审批、删除、模型注册或部署能力；成功 Run 产出的
-    joblib 模型只供可信本地环境离线评估，并固定返回 NO_ELIGIBLE_MODEL。
+    当前激活实现包含可重启恢复的单机 durable profile 和生产控制面预览：支持真实
+    CSV/Parquet 上传、SQLite checkpoint、受限的二分类/回归训练、结构化人工中断/继续、
+    可校验 artifact 下载、OIDC/JWKS token 验证、Webhook outbox、审批 workflow、
+    deletion job 和审批通过后的 ModelCandidate 注册。
+
+    正式 Docker target 已安装生产客户端依赖，但仍使用 SQLite、本地对象存储和进程内 worker，
+    因此 `x-production-image-ready=false` 且 formal profile 的 `/readyz` 必须 fail closed。
+    在接入真实 PostgreSQL/RLS、对象存储/KMS、DLP、隔离 worker、Webhook dispatcher、
+    可观测性和备份演练前，不应直接暴露给真实生产租户。
 servers:
   - url: /
     description: 当前 API origin
@@ -581,8 +586,9 @@ paths:
       description: |
         RunResult 与终态转换、ResultManifest 和 artifact 元数据在同一逻辑提交边界完成。
         FAILED/CANCELED 仍返回已经 COMMITTED 的 partial_output_refs 和稳定失败原因。
-        SUCCEEDED 可以返回 NO_ELIGIBLE_MODEL，这不是系统失败；当前本地 profile 不执行生产
-        质量/风险门禁，因此真实训练成功时也固定使用该 disposition。
+        默认 production_deploy=DISABLED 的 SUCCEEDED Run 返回 NO_ELIGIBLE_MODEL，这不是系统
+        失败。设置 REQUIRE_APPROVAL 后，训练成功先进入 WAITING_APPROVAL；审批通过并注册
+        ModelCandidate 后返回 ELIGIBLE_MODEL_AVAILABLE，但这不表示已部署在线推理服务。
       parameters:
         - $ref: '#/components/parameters/RunId'
       responses:

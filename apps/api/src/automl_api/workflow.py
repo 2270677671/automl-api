@@ -373,6 +373,13 @@ class WorkflowService:
         self, principal: Principal, dataset_version_id: str
     ) -> dict[str, Any]:
         version = self._owned(await self.store.get_dataset_version(dataset_version_id), principal)
+        if version.get("status") == "DELETED":
+            raise APIProblem(
+                404,
+                "not_found",
+                "Dataset version not found",
+                "The dataset version has been deleted or is not visible to this principal.",
+            )
         return self.public_dataset_version(version)
 
     async def create_run(self, principal: Principal, request: dict[str, Any]) -> dict[str, Any]:
@@ -429,6 +436,7 @@ class WorkflowService:
                     "created_at": now,
                     "updated_at": now,
                     "links": self._run_links(run_id),
+                    "autonomy": request["autonomy"],
                     "objective": request["objective"],
                     "backend_id": backend["backend_id"],
                     "policy": request["policy"],
@@ -1461,6 +1469,8 @@ class WorkflowService:
 
     async def get_artifact(self, principal: Principal, artifact_id: str) -> dict[str, Any]:
         artifact = self._owned(await self.store.get_artifact(artifact_id), principal)
+        if artifact.get("state") != "COMMITTED":
+            raise APIProblem(410, "artifact_gone", "Artifact is unavailable", "Artifact is gone.")
         return {key: value for key, value in artifact.items() if key != "tenant_id"}
 
     async def create_download_ticket(

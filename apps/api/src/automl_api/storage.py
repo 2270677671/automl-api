@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import os
+import shutil
 from collections.abc import AsyncIterable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -87,6 +88,10 @@ class BlobStore(Protocol):
         artifact_id: str,
         content: bytes,
     ) -> BlobInfo: ...
+
+    async def delete_key(self, key: str) -> bool: ...
+
+    async def delete_dataset_version(self, *, tenant_id: str, dataset_version_id: str) -> None: ...
 
     def path_for_key(self, key: str) -> Path: ...
 
@@ -315,6 +320,25 @@ class LocalBlobStore:
             etag=_etag(digest),
         )
 
+    async def delete_key(self, key: str) -> bool:
+        try:
+            path = self.path_for_key(key)
+        except BlobNotFoundError:
+            return False
+        await anyio.to_thread.run_sync(path.unlink)
+        return True
+
+    async def delete_dataset_version(self, *, tenant_id: str, dataset_version_id: str) -> None:
+        tenant = _safe_component(tenant_id, "tenant_id")
+        version = _safe_component(dataset_version_id, "dataset_version_id")
+        directories = (
+            self.root / "uploads" / tenant / version,
+            self.root / "datasets" / tenant / version,
+        )
+        for directory in directories:
+            if directory.exists():
+                await anyio.to_thread.run_sync(shutil.rmtree, directory)
+
     def path_for_key(self, key: str) -> Path:
         candidate = (self.root / key).resolve()
         try:
@@ -426,6 +450,12 @@ class SyntheticBlobStore:
             sha256=digest,
             etag=_etag(digest),
         )
+
+    async def delete_key(self, key: str) -> bool:
+        return False
+
+    async def delete_dataset_version(self, *, tenant_id: str, dataset_version_id: str) -> None:
+        return None
 
     def path_for_key(self, key: str) -> Path:
         raise BlobNotFoundError(f"synthetic blob {key!r} has no bytes")

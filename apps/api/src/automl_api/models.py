@@ -185,6 +185,58 @@ class ArtifactState(str, Enum):
     DELETED = "DELETED"
 
 
+class ApprovalKind(str, Enum):
+    PII_USE = "PII_USE"
+    HIGH_IMPACT = "HIGH_IMPACT"
+    EXTERNAL_SIDE_EFFECT = "EXTERNAL_SIDE_EFFECT"
+    PRODUCTION_DEPLOY = "PRODUCTION_DEPLOY"
+
+
+class ApprovalStatus(str, Enum):
+    OPEN = "OPEN"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    CHANGES_REQUESTED = "CHANGES_REQUESTED"
+    EXPIRED = "EXPIRED"
+    SUPERSEDED = "SUPERSEDED"
+
+
+class ApprovalDecision(str, Enum):
+    APPROVE = "APPROVE"
+    REQUEST_CHANGES = "REQUEST_CHANGES"
+    REJECT = "REJECT"
+
+
+class WebhookEndpointStatus(str, Enum):
+    ACTIVE = "ACTIVE"
+    PAUSED_DELIVERY_FAILURES = "PAUSED_DELIVERY_FAILURES"
+    DISABLED = "DISABLED"
+
+
+class WebhookDeliveryStatus(str, Enum):
+    PENDING = "PENDING"
+    DELIVERING = "DELIVERING"
+    SUCCEEDED = "SUCCEEDED"
+    RETRYING = "RETRYING"
+    EXHAUSTED = "EXHAUSTED"
+
+
+class DeletionJobStatus(str, Enum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
+class DeletionStoreStatus(str, Enum):
+    PENDING = "PENDING"
+    DELETING = "DELETING"
+    INACCESSIBLE = "INACCESSIBLE"
+    DELETED = "DELETED"
+    RETAINED_UNTIL = "RETAINED_UNTIL"
+    FAILED = "FAILED"
+
+
 class Recovery(PublicModel):
     action: str | None = None
     href: str | None = None
@@ -1138,6 +1190,138 @@ class RunResult(RootModel[RunResultVariant]):
     """A terminal result whose disposition fixes all legal field combinations."""
 
 
+class Approval(PublicModel):
+    approval_id: str
+    run_id: str
+    run_revision: PositiveRevision
+    evidence_version: PositiveRevision
+    kind: ApprovalKind
+    status: ApprovalStatus
+    evidence_refs: list[str]
+    created_at: datetime
+    expires_at: datetime
+    decision_reason: str | None = None
+
+
+class DecideApprovalRequest(RequestModel):
+    decision: ApprovalDecision
+    reason: Annotated[str, StringConstraints(min_length=1, max_length=4000)]
+    evidence_version: PositiveRevision
+
+
+class ApprovalPage(PublicModel):
+    items: list[Approval]
+    page: PageMeta
+
+
+class FieldSignature(PublicModel):
+    name: str
+    data_type: str
+    required: bool
+
+
+class ModelSignature(PublicModel):
+    inputs: list[FieldSignature]
+    outputs: list[FieldSignature]
+
+
+class ModelCandidate(PublicModel):
+    model_id: str
+    run_id: str
+    status: Literal["ELIGIBLE_CANDIDATE"]
+    signature: ModelSignature
+    model_card_output_id: str
+    package_artifact_ref: ArtifactRef
+    created_at: datetime
+
+
+class CreateWebhookEndpointRequest(RequestModel):
+    url: AnyUrl
+    event_types: Annotated[list[str], Field(min_length=1)]
+    description: Annotated[str, StringConstraints(max_length=500)] | None = None
+
+    @model_validator(mode="after")
+    def validate_event_types(self) -> CreateWebhookEndpointRequest:
+        normalized = [item.strip() for item in self.event_types]
+        if any(not item for item in normalized):
+            raise ValueError("event_types cannot contain empty values")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("event_types must be unique")
+        self.event_types = normalized
+        return self
+
+
+class WebhookEndpoint(PublicModel):
+    webhook_endpoint_id: str
+    url: AnyUrl
+    event_types: list[str]
+    status: WebhookEndpointStatus
+    signature_version: Literal["v1"]
+    replay_window_seconds: Literal[300]
+    created_at: datetime
+    status_reason: str | None = None
+    paused_at: datetime | None = None
+
+
+class WebhookEndpointCreated(WebhookEndpoint):
+    signing_secret: Annotated[str, StringConstraints(min_length=43, max_length=43)]
+
+
+class WebhookSecretRotated(PublicModel):
+    webhook_endpoint_id: str
+    signing_secret: Annotated[str, StringConstraints(min_length=43, max_length=43)]
+    previous_secret_valid_until: datetime
+    created_at: datetime
+
+
+class WebhookDelivery(PublicModel):
+    delivery_id: str
+    webhook_endpoint_id: str
+    event_id: str
+    event_type: str
+    run_id: str
+    status: WebhookDeliveryStatus
+    attempt_count: NonNegativeInt
+    first_attempt_at: datetime | None
+    next_attempt_at: datetime | None
+    last_response_status: Annotated[int, Field(ge=100, le=599)] | None
+    last_problem: Problem | None
+    created_at: datetime
+    delivered_at: datetime | None
+    exhausted_at: datetime | None
+    redeliver_until: datetime | None
+
+
+class WebhookDeliveryPage(PublicModel):
+    items: list[WebhookDelivery]
+    page: PageMeta
+
+
+class WebhookRedeliveryReceipt(PublicModel):
+    redelivery_id: str
+    delivery_id: str
+    status: Literal["ACCEPTED"]
+    submitted_at: datetime
+    delivery_href: str
+
+
+class DeletionStore(PublicModel):
+    name: str
+    status: DeletionStoreStatus
+    retained_until: datetime | None = None
+    verified_at: datetime | None = None
+
+
+class DeletionJob(PublicModel):
+    deletion_id: str
+    dataset_id: str
+    status: DeletionJobStatus
+    affected_run_ids: list[str]
+    stores: list[DeletionStore]
+    created_at: datetime
+    completed_at: datetime | None = None
+
+
 class AgentEventCheckpoint(PublicModel):
     after_seq: NonNegativeInt
     events_href: str
@@ -1190,18 +1374,24 @@ __all__ = [
     "AgentOperationRef",
     "AgentRunContext",
     "AnswerDecisionPacketRequest",
+    "Approval",
+    "ApprovalPage",
     "Artifact",
     "ArtifactRef",
     "CommandReceipt",
+    "CreateWebhookEndpointRequest",
     "CreateDatasetRequest",
     "CreateRunRequest",
     "DatasetUploadSession",
     "DatasetVersion",
+    "DecideApprovalRequest",
     "DecisionPacket",
     "DecisionPacketPage",
     "DecisionResolutionPolicy",
+    "DeletionJob",
     "DownloadTicket",
     "FinalizeDatasetRequest",
+    "ModelCandidate",
     "OutputPage",
     "OutputResource",
     "PageMeta",
@@ -1217,4 +1407,10 @@ __all__ = [
     "RunSnapshot",
     "SignUploadPartsRequest",
     "UploadPartsResponse",
+    "WebhookDelivery",
+    "WebhookDeliveryPage",
+    "WebhookEndpoint",
+    "WebhookEndpointCreated",
+    "WebhookRedeliveryReceipt",
+    "WebhookSecretRotated",
 ]

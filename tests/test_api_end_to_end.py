@@ -251,9 +251,9 @@ def test_problem_documents_and_canonical_contract(client: TestClient) -> None:
     )
     assert invalid.status_code == 422
     assert invalid.json()["code"] == "validation_failed"
-    unsupported = client.get("/v1/webhook-endpoints", headers=AUTH)
-    assert unsupported.status_code == 501
-    assert unsupported.json()["code"] == "capability_not_implemented"
+    webhook_page = client.get("/v1/webhook-endpoints", headers=AUTH)
+    assert webhook_page.status_code == 200
+    assert webhook_page.json()["items"] == []
     contract = client.get("/openapi.yaml")
     assert contract.status_code == 200
     assert contract.text.startswith("openapi: 3.1.0")

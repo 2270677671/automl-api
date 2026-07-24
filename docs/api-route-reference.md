@@ -2,16 +2,16 @@
 
 ## 1. 文档说明
 
-本文面向外部 Agent 平台、SDK 开发者和 API 接入工程师，逐项说明 Managed AutoML API 0.7.0 的 HTTP 路由用途、状态和调用示例。完整字段、枚举和响应 Schema 以 [OpenAPI 3.1 契约](../openapi/automl-api.yaml) 为准。
+本文面向外部 Agent 平台、SDK 开发者和 API 接入工程师，逐项说明 Managed AutoML API 0.7.0 的 HTTP 路由用途、状态和调用示例。控制面字段、枚举和响应 Schema 以 [OpenAPI 3.1 契约](../openapi/automl-api.yaml) 为准；上传字节和下载票据 URL 属于 data-plane 路由，由控制面响应提供，不允许客户端自行拼接。
 
 当前服务是独立 AutoML 执行后端，不内置 LLM。外部 Agent 平台负责 LLM、Prompt、凭据保管、预算和人机交互；本 API 负责数据上传、运行编排、结构化中断、训练评估、输出和 artifact 下载。
 
 ## 2. 通用约定
 
-示例默认本机部署地址为 `http://127.0.0.1:8001`：
+示例默认本机部署地址为 `http://127.0.0.1:8000`：
 
 ```bash
-export AUTOML_API=http://127.0.0.1:8001
+export AUTOML_API=http://127.0.0.1:8000
 export AUTOML_TOKEN=local-exp
 ```
 
@@ -45,8 +45,9 @@ Accept: text/event-stream                       # SSE 事件流
 | Run 生命周期 | 可用 | 创建、列表、读取、暂停、恢复、取消 |
 | 事件、输出、DecisionPacket、结果 | 可用 | 支持 JSON 分页、SSE、结构化中断和终态结果 |
 | artifact 下载 | 可用 | 通过短期 ticket 下载，支持 Range 和 SHA-256 校验 |
-| experiments/approvals/models/deletions | 占位或后续契约 | 部分返回空页、`404` 或 `501` |
-| Webhook 管理 | 后续契约 | 当前统一返回 `501 capability_not_implemented` |
+| experiments | 兼容占位 | 列表返回空页；按 ID 查询返回 `404` |
+| approvals/models/deletions | 可用 | 生产部署审批、候选模型读取和删除任务跟踪 |
+| Webhook 管理与 outbox | 可用 | endpoint 管理、delivery 查询和人工重投；HTTP dispatcher 需独立部署 |
 
 ## 4. 路由明细
 
@@ -70,7 +71,9 @@ curl -sS "$AUTOML_API/healthz"
 
 用途：就绪检查。SQLite profile 会执行一次轻量 store 查询。该路由不需要 Bearer token，不在 OpenAPI schema 中。
 
-响应：`200`。
+响应：local/partner-preview profile 就绪时返回 `200`。0.7.0 的 formal production profile
+包含一个固定失败的 `runtime_adapters` 必选检查，因此无论环境变量是否齐全都返回
+`503 production_preflight_failed`；它不能作为当前版本的生产启动探针。
 
 ```bash
 curl -sS "$AUTOML_API/readyz"
@@ -521,7 +524,7 @@ curl -sS -X POST "$AUTOML_API/v1/runs/run_000000000001/decision-packets/ws_00000
 ```bash
 curl -sS -X POST "$AUTOML_API/v1/runs/run_000000000001:pause" \
   -H "Authorization: Bearer $AUTOML_TOKEN" \
-  -H "Idempotency-Key: pause-run-0001" \
+  -H "Idempotency-Key: pause-run-command-0001" \
   -H 'If-Match: "3"'
 ```
 
@@ -534,7 +537,7 @@ curl -sS -X POST "$AUTOML_API/v1/runs/run_000000000001:pause" \
 ```bash
 curl -sS -X POST "$AUTOML_API/v1/runs/run_000000000001:resume" \
   -H "Authorization: Bearer $AUTOML_TOKEN" \
-  -H "Idempotency-Key: resume-run-0001" \
+  -H "Idempotency-Key: resume-run-command-0001" \
   -H 'If-Match: "4"'
 ```
 
@@ -547,7 +550,7 @@ curl -sS -X POST "$AUTOML_API/v1/runs/run_000000000001:resume" \
 ```bash
 curl -sS -X POST "$AUTOML_API/v1/runs/run_000000000001:cancel" \
   -H "Authorization: Bearer $AUTOML_TOKEN" \
-  -H "Idempotency-Key: cancel-run-0001"
+  -H "Idempotency-Key: cancel-run-command-0001"
 ```
 
 ### 4.25 GET `/v1/commands/{command_id}`
@@ -624,7 +627,7 @@ curl -sS -X POST "$AUTOML_API/v1/artifacts/art_000000000001:download" \
 {
   "ticket_id": "dlt_000000000001",
   "artifact_id": "art_000000000001",
-  "url": "http://127.0.0.1:8001/v1/artifact-downloads/<token>",
+  "url": "http://127.0.0.1:8000/v1/artifact-downloads/<token>",
   "expires_in_seconds": 900,
   "etag": "\"artifact-etag\"",
   "sha256": "0123456789abcdef...",
@@ -687,7 +690,8 @@ curl -sS -i "$AUTOML_API/v1/runs/run_000000000001/experiments/exp_000000000001" 
 
 ### 4.32 GET `/v1/runs/{run_id}/approvals`
 
-用途：列出审批对象。当前 0.7.0 是兼容占位路由，返回空页。
+用途：列出审批对象。`production_deploy=REQUIRE_APPROVAL` 的 Run 在模型包装后会进入
+`WAITING_APPROVAL`，此路由返回当前审批对象。
 
 认证：需要 Bearer。
 
@@ -698,7 +702,8 @@ curl -sS "$AUTOML_API/v1/runs/run_000000000001/approvals" \
 
 ### 4.33 POST `/v1/runs/{run_id}/approvals/{approval_id}:decide`
 
-用途：提交审批决定。当前 0.7.0 尚未实现审批 workflow，返回 `501 capability_not_implemented`。
+用途：提交审批决定。`APPROVE` 会注册 `ModelCandidate` 并使 Run 进入终态；
+`REQUEST_CHANGES` 或 `REJECT` 会终止候选注册并返回无合格模型结果。
 
 认证：需要 Bearer。
 
@@ -706,13 +711,14 @@ curl -sS "$AUTOML_API/v1/runs/run_000000000001/approvals" \
 curl -sS -i -X POST "$AUTOML_API/v1/runs/run_000000000001/approvals/apr_000000000001:decide" \
   -H "Authorization: Bearer $AUTOML_TOKEN" \
   -H "Idempotency-Key: decide-approval-0001" \
+  -H 'If-Match: "1"' \
   -H "Content-Type: application/json" \
-  -d '{"decision": "APPROVE"}'
+  -d '{"decision": "APPROVE", "reason": "指标和限制已审核", "evidence_version": 1}'
 ```
 
 ### 4.34 GET `/v1/models/{model_id}`
 
-用途：读取已注册模型候选。当前 0.7.0 不注册生产模型候选，返回 `404`。
+用途：读取已注册模型候选。只有生产部署审批通过后才会出现 `ELIGIBLE_CANDIDATE`。
 
 认证：需要 Bearer。
 
@@ -723,7 +729,9 @@ curl -sS -i "$AUTOML_API/v1/models/model_000000000001" \
 
 ### 4.35 Webhook 管理路由组 `/v1/webhook-endpoints...`
 
-用途：Webhook 管理和投递查询的后续公开契约。当前 0.7.0 未实现，所有列出的路由都会返回 `501 capability_not_implemented`。
+用途：Webhook 管理和投递查询。当前 API 已支持 endpoint 创建、列表、读取、删除、
+密钥轮换、启用、delivery outbox 查询和人工重投；真实 HTTP 投递 dispatcher 可作为独立
+worker 消费 outbox。
 
 认证：需要 Bearer；生产模式下仍会按具体 operation 做 scope 检查。
 
@@ -731,15 +739,15 @@ curl -sS -i "$AUTOML_API/v1/models/model_000000000001" \
 
 | 方法 | 路由 | 预期用途 | 当前状态 |
 | --- | --- | --- | --- |
-| `POST` | `/v1/webhook-endpoints` | 创建 Webhook endpoint | `501` |
-| `GET` | `/v1/webhook-endpoints` | 列出 Webhook endpoint | `501` |
-| `GET` | `/v1/webhook-endpoints/{id}` | 读取 Webhook endpoint | `501` |
-| `DELETE` | `/v1/webhook-endpoints/{id}` | 删除 Webhook endpoint | `501` |
-| `POST` | `/v1/webhook-endpoints/{id}:rotate-secret` | 轮换签名密钥 | `501` |
-| `POST` | `/v1/webhook-endpoints/{id}:enable` | 恢复投递 | `501` |
-| `GET` | `/v1/webhook-endpoints/{id}/deliveries` | 列出投递记录 | `501` |
-| `GET` | `/v1/webhook-endpoints/{id}/deliveries/{delivery_id}` | 读取投递记录 | `501` |
-| `POST` | `/v1/webhook-endpoints/{id}/deliveries/{delivery_id}:redeliver` | 请求重投 | `501` |
+| `POST` | `/v1/webhook-endpoints` | 创建 Webhook endpoint | 可用 |
+| `GET` | `/v1/webhook-endpoints` | 列出 Webhook endpoint | 可用 |
+| `GET` | `/v1/webhook-endpoints/{id}` | 读取 Webhook endpoint | 可用 |
+| `DELETE` | `/v1/webhook-endpoints/{id}` | 删除 Webhook endpoint | 可用 |
+| `POST` | `/v1/webhook-endpoints/{id}:rotate-secret` | 轮换签名密钥 | 可用 |
+| `POST` | `/v1/webhook-endpoints/{id}:enable` | 恢复投递 | 可用 |
+| `GET` | `/v1/webhook-endpoints/{id}/deliveries` | 列出投递记录 | 可用 |
+| `GET` | `/v1/webhook-endpoints/{id}/deliveries/{delivery_id}` | 读取投递记录 | 可用 |
+| `POST` | `/v1/webhook-endpoints/{id}/deliveries/{delivery_id}:redeliver` | 请求重投 | 可用 |
 
 示例：
 
@@ -756,7 +764,10 @@ curl -sS -i -X POST "$AUTOML_API/v1/webhook-endpoints" \
 
 ### 4.36 DELETE `/v1/datasets/{dataset_id}`
 
-用途：请求删除数据集。当前 0.7.0 尚未实现删除 saga，返回 `501 capability_not_implemented`。
+用途：请求删除数据集并创建 deletion job。当前 local durable profile 会先撤销控制面访问、取消
+关联的非终态 Run，再同步物理删除本地 upload/source 和派生 artifact 字节，并把 artifact 标为
+`DELETED`；local model-registry 状态记为 `INACCESSIBLE`。这不等价于生产级分布式删除 saga：
+PostgreSQL、外部对象存储和外部模型注册表仍需独立 worker 执行并回写逐存储状态。
 
 认证：需要 Bearer。
 
@@ -768,7 +779,7 @@ curl -sS -i -X DELETE "$AUTOML_API/v1/datasets/ds_000000000001" \
 
 ### 4.37 GET `/v1/deletions/{deletion_id}`
 
-用途：查询删除任务。当前 0.7.0 尚未创建删除任务，返回 `404`。
+用途：查询删除任务状态、受影响 Run 和逐存储删除状态。
 
 认证：需要 Bearer。
 
@@ -807,7 +818,6 @@ curl -sS -i "$AUTOML_API/v1/deletions/del_000000000001" \
 | `413` | `dataset_too_large` | 数据超过限制 | 缩小数据或调整部署限额 |
 | `422` | `validation_failed`、`budget_limit_exceeded` | 请求体或预算不合法 | 按 schema 和限制修正 |
 | `429` | `active_run_limit_exceeded`、`tenant_storage_limit_exceeded` | 并发或存储超限 | 按 `Retry-After` 退避 |
-| `501` | `capability_not_implemented` | 后续契约尚未实现 | 不要在当前 profile 依赖该能力 |
 
 ## 7. Python SDK 对应关系
 
@@ -818,11 +828,14 @@ curl -sS -i "$AUTOML_API/v1/deletions/del_000000000001" \
 | `GET /v1/runs/{run_id}/agent-context` | `get_agent_context()` |
 | `GET /v1/runs/{run_id}/agent-actions` | `list_agent_actions()` |
 | `POST /v1/datasets` | `create_dataset()`、`upload_dataset_file()` |
+| `POST /v1/dataset-versions/{id}/upload-parts:sign` | `sign_upload_parts()` |
 | `POST /v1/dataset-versions/{id}:finalize` | `finalize_dataset()` |
 | `GET /v1/dataset-versions/{id}` | `get_dataset_version()` |
 | `POST /v1/runs` | `create_run()` |
 | `GET /v1/runs` | `list_runs()` |
 | `GET /v1/runs/{run_id}` | `get_run()` |
+| `GET /v1/runs/{run_id}/stages` | `get_run_stages()` |
+| `GET /v1/runs/{run_id}/experiments...` | `list_run_experiments()`、`get_run_experiment()` |
 | `GET /v1/runs/{run_id}/events` | `get_run_events()`、`iter_run_events()`、`stream_run_events()` |
 | `GET /v1/runs/{run_id}/outputs` | `list_outputs()`、`iter_outputs()` |
 | `GET /v1/runs/{run_id}/outputs/{output_id}` | `get_output()` |
@@ -836,13 +849,18 @@ curl -sS -i "$AUTOML_API/v1/deletions/del_000000000001" \
 | `GET /v1/artifacts/{artifact_id}` | `get_artifact()` |
 | `POST /v1/artifacts/{artifact_id}:download` | `create_artifact_download_ticket()` |
 | `GET /v1/artifact-downloads/{token}` | `download_artifact_file()` |
+| `GET/POST /v1/runs/{run_id}/approvals...` | `list_approvals()`、`decide_approval()` |
+| `GET /v1/models/{model_id}` | `get_model_candidate()` |
+| `/v1/webhook-endpoints...` | `create/list/get/delete/rotate/enable_webhook_*()`、delivery helpers |
+| `DELETE /v1/datasets/{dataset_id}` | `delete_dataset()` |
+| `GET /v1/deletions/{deletion_id}` | `get_deletion_job()` |
 
 SDK 端到端示例：
 
 ```python
 from automl_sdk import AutoMLClient
 
-with AutoMLClient("http://127.0.0.1:8001", token="local-exp") as api:
+with AutoMLClient("http://127.0.0.1:8000", token="local-exp") as api:
     dataset = api.upload_dataset_file("customer_churn.csv", name="customer-churn")
     run = api.create_run(
         dataset_version_id=dataset["dataset_version_id"],

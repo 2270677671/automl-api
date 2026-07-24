@@ -8,6 +8,9 @@ Semantic Versioning for the public HTTP and Python SDK contracts.
 - Added production delivery guidance, a complete v1 API design document, a production environment
   template, and GitHub Actions CI coverage for linting, OpenAPI generation, tests, and release
   input verification.
+- Added a fail-closed formal image target, production dependency reporting, OIDC/JWKS verification,
+  PostgreSQL/RLS migration assets, durable Webhook endpoint/outbox APIs, human approval controls,
+  local physical deletion jobs, model candidate registration, and matching Python SDK helpers.
 
 ## 0.7.0 - 2026-07-24
 

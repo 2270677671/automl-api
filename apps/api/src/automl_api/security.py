@@ -183,6 +183,100 @@ class HS256JWTVerifier:
         )
 
 
+class JWKSJWTVerifier:
+    """OIDC/JWKS verifier for formal production deployments."""
+
+    def __init__(
+        self,
+        *,
+        issuer: str,
+        audience: str | Iterable[str],
+        algorithms: Iterable[str],
+        jwks_url: str | None = None,
+        jwks_json: Mapping[str, Any] | None = None,
+        leeway_seconds: int = 30,
+    ) -> None:
+        try:
+            import jwt
+        except ImportError as error:
+            raise ValueError("PyJWT[crypto] is required for OIDC/JWKS verification.") from error
+        self._jwt = jwt
+        self._issuer = _nonempty_string(issuer, "issuer")
+        audiences = (audience,) if isinstance(audience, str) else tuple(audience)
+        self._audiences = frozenset(_nonempty_string(value, "audience") for value in audiences)
+        if not self._audiences:
+            raise ValueError("At least one expected audience is required.")
+        normalized_algorithms = tuple(_nonempty_string(value, "algorithm") for value in algorithms)
+        if not normalized_algorithms:
+            raise ValueError("At least one JWT algorithm is required.")
+        if any(
+            value.upper() == "NONE" or value.upper().startswith("HS")
+            for value in normalized_algorithms
+        ):
+            raise ValueError("JWKS verification only accepts asymmetric JWT algorithms.")
+        self._algorithms = normalized_algorithms
+        if not isinstance(leeway_seconds, int) or isinstance(leeway_seconds, bool):
+            raise ValueError("leeway_seconds must be an integer.")
+        if not 0 <= leeway_seconds <= 300:
+            raise ValueError("leeway_seconds must be between 0 and 300.")
+        self._leeway_seconds = leeway_seconds
+        if bool(jwks_url) == bool(jwks_json):
+            raise ValueError("Configure exactly one of jwks_url or jwks_json.")
+        self._client = jwt.PyJWKClient(jwks_url) if jwks_url else None
+        self._jwks = jwt.PyJWKSet.from_dict(dict(jwks_json or {})) if jwks_json else None
+
+    def verify(self, token: str, *, now: float | None = None) -> VerifiedToken:
+        if not isinstance(token, str) or not token or len(token.encode("utf-8")) > _MAX_TOKEN_BYTES:
+            raise TokenVerificationError("The bearer token is invalid.")
+        try:
+            header = self._jwt.get_unverified_header(token)
+            if header.get("crit"):
+                raise TokenVerificationError("Critical JWT headers are not supported.")
+            key_id = header.get("kid")
+            if key_id is not None and not isinstance(key_id, str):
+                raise TokenVerificationError("The bearer token key id is invalid.")
+            signing_key = self._signing_key(token, key_id)
+            payload = self._jwt.decode(
+                token,
+                key=signing_key,
+                algorithms=list(self._algorithms),
+                audience=list(self._audiences),
+                issuer=self._issuer,
+                leeway=self._leeway_seconds,
+                options={"require": ["exp", "iss", "aud", "sub"]},
+            )
+        except TokenVerificationError:
+            raise
+        except Exception as error:
+            raise TokenVerificationError("The bearer token is invalid or expired.") from error
+        if not isinstance(payload, dict):
+            raise TokenVerificationError("The bearer token payload is invalid.")
+        return VerifiedToken(
+            subject=_identifier_claim(payload.get("sub"), "sub"),
+            tenant_id=_tenant_id_claim(payload.get("tenant_id")),
+            scopes=_claim_set(payload.get("scope"), "scope")
+            | _claim_set(payload.get("scopes"), "scopes"),
+            roles=_claim_set(payload.get("role"), "role")
+            | _claim_set(payload.get("roles"), "roles"),
+            actor_type=_actor_type_claim(payload.get("actor_type", "service")),
+            issuer=self._issuer,
+            key_id=key_id,
+        )
+
+    def _signing_key(self, token: str, key_id: str | None) -> Any:
+        if self._client is not None:
+            return self._client.get_signing_key_from_jwt(token).key
+        assert self._jwks is not None
+        if key_id is None:
+            if len(self._jwks.keys) != 1:
+                raise TokenVerificationError("A key id is required while keys are rotating.")
+            return self._jwks.keys[0].key
+        for key in self._jwks.keys:
+            if key.key_id == key_id:
+                return key.key
+        raise TokenVerificationError("The bearer token key id is unknown.")
+
+
 def _decode_json_object(segment: str) -> dict[str, Any]:
     try:
         decoded = _decode_base64url(segment).decode("utf-8")
@@ -316,6 +410,7 @@ def _nonempty_string(value: Any, name: str) -> str:
 __all__ = [
     "ActorType",
     "HS256JWTVerifier",
+    "JWKSJWTVerifier",
     "TokenVerificationError",
     "TokenVerifier",
     "VerifiedToken",

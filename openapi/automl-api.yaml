@@ -3,13 +3,14 @@ jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: Managed AutoML API
   version: 0.7.0
-  x-active-implementation-milestone: milestone-2-local-durable
+  x-active-implementation-milestone: milestone-2-local-durable-plus-control-plane
   x-production-ready: false
+  x-production-image-ready: false
   x-implementation-profile:
     persistence: single-node-sqlite-checkpoint
     object-storage: local-filesystem
     execution: single-local-worker
-    authentication: development-synthetic-or-preview-hs256-jwt
+    authentication: development-synthetic-preview-hs256-or-oidc-jwks
     llm-integration: external-agent-platform
     internal-llm-calls: false
   license:
@@ -22,11 +23,15 @@ info:
     编排器、对象存储、实验追踪和 worker 均为内部实现选择，不作为公共契约暴露。
     API 使用四层读取模型：RunSnapshot、RunEvent、OutputResource、RunResult。
 
-    当前激活实现是可重启恢复的单机开发 profile：支持真实 CSV/Parquet 上传、SQLite checkpoint、
-    受限的二分类/回归 scikit-learn 训练、结构化人工中断/继续，以及可校验的 artifact 下载。
-    它仅提供开发合成身份或预览 HS256 JWT，不具备正式 OIDC/JWKS 身份联合、RLS/DLP、HA、
-    Webhook、审批、删除、模型注册或部署能力；成功 Run 产出的
-    joblib 模型只供可信本地环境离线评估，并固定返回 NO_ELIGIBLE_MODEL。
+    当前激活实现包含可重启恢复的单机 durable profile 和生产控制面预览：支持真实
+    CSV/Parquet 上传、SQLite checkpoint、受限的二分类/回归训练、结构化人工中断/继续、
+    可校验 artifact 下载、OIDC/JWKS token 验证、Webhook outbox、审批 workflow、
+    deletion job 和审批通过后的 ModelCandidate 注册。
+
+    正式 Docker target 已安装生产客户端依赖，但仍使用 SQLite、本地对象存储和进程内 worker，
+    因此 `x-production-image-ready=false` 且 formal profile 的 `/readyz` 必须 fail closed。
+    在接入真实 PostgreSQL/RLS、对象存储/KMS、DLP、隔离 worker、Webhook dispatcher、
+    可观测性和备份演练前，不应直接暴露给真实生产租户。
 servers:
   - url: /
     description: 当前 API origin
@@ -580,7 +585,7 @@ paths:
     get:
       tags: [Decisions]
       operationId: listRunApprovals
-      x-maturity: local-empty-placeholder
+      x-maturity: production-preview
       summary: 查询审批历史
       parameters:
         - $ref: '#/components/parameters/RunId'
@@ -601,7 +606,7 @@ paths:
     post:
       tags: [Decisions]
       operationId: decideApproval
-      x-maturity: not-implemented
+      x-maturity: production-preview
       summary: 批准、拒绝或要求修改
       parameters:
         - $ref: '#/components/parameters/RunId'
@@ -627,7 +632,6 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
         '412': {$ref: '#/components/responses/PreconditionFailed'}
-        '501': {$ref: '#/components/responses/NotImplemented'}
 
   '/v1/runs/{run_id}:pause':
     post:
@@ -724,8 +728,9 @@ paths:
       description: |
         RunResult 与终态转换、ResultManifest 和 artifact 元数据在同一逻辑提交边界完成。
         FAILED/CANCELED 仍返回已经 COMMITTED 的 partial_output_refs 和稳定失败原因。
-        SUCCEEDED 可以返回 NO_ELIGIBLE_MODEL，这不是系统失败；当前本地 profile 不执行生产
-        质量/风险门禁，因此真实训练成功时也固定使用该 disposition。
+        默认 production_deploy=DISABLED 的 SUCCEEDED Run 返回 NO_ELIGIBLE_MODEL，这不是系统
+        失败。设置 REQUIRE_APPROVAL 后，训练成功先进入 WAITING_APPROVAL；审批通过并注册
+        ModelCandidate 后返回 ELIGIBLE_MODEL_AVAILABLE，但这不表示已部署在线推理服务。
       parameters:
         - $ref: '#/components/parameters/RunId'
       responses:
@@ -792,7 +797,7 @@ paths:
     get:
       tags: [Models]
       operationId: getModelCandidate
-      x-maturity: not-implemented
+      x-maturity: production-preview
       summary: 获取合格模型、签名和限制
       parameters:
         - $ref: '#/components/parameters/ModelId'
@@ -810,7 +815,7 @@ paths:
     post:
       tags: [Webhooks]
       operationId: createWebhookEndpoint
-      x-maturity: not-implemented
+      x-maturity: production-preview
       summary: 注册签名 Webhook
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -829,11 +834,10 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '422': {$ref: '#/components/responses/UnprocessableEntity'}
-        '501': {$ref: '#/components/responses/NotImplemented'}
     get:
       tags: [Webhooks]
       operationId: listWebhookEndpoints
-      x-maturity: not-implemented
+      x-maturity: production-preview
       summary: 查询 Webhook
       parameters:
         - $ref: '#/components/parameters/Cursor'
@@ -853,13 +857,12 @@ paths:
                   page: {$ref: '#/components/schemas/PageMeta'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
-        '501': {$ref: '#/components/responses/NotImplemented'}
 
   '/v1/webhook-endpoints/{webhook_endpoint_id}':
     get:
       tags: [Webhooks]
       operationId: getWebhookEndpoint
-      x-maturity: not-implemented
+      x-maturity: production-preview
       summary: 获取 Webhook 配置
       parameters:
         - $ref: '#/components/parameters/WebhookEndpointId'
@@ -872,11 +875,10 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '501': {$ref: '#/components/responses/NotImplemented'}
     delete:
       tags: [Webhooks]
       operationId: deleteWebhookEndpoint
-      x-maturity: not-implemented
+      x-maturity: production-preview
       summary: 删除 Webhook
       parameters:
         - $ref: '#/components/parameters/WebhookEndpointId'
@@ -886,13 +888,12 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '501': {$ref: '#/components/responses/NotImplemented'}
 
   '/v1/webhook-endpoints/{webhook_endpoint_id}:rotate-secret':
     post:
       tags: [Webhooks]
       operationId: rotateWebhookEndpointSecret
-      x-maturity: not-implemented
+      x-maturity: production-preview
       summary: 轮换 Webhook 签名密钥
       description: |
         返回一次新密钥。旧密钥继续有效 300 秒，允许消费者无中断切换；宽限期后立即失效。
@@ -909,13 +910,12 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
-        '501': {$ref: '#/components/responses/NotImplemented'}
 
   '/v1/webhook-endpoints/{webhook_endpoint_id}:enable':
     post:
       tags: [Webhooks]
       operationId: enableWebhookEndpoint
-      x-maturity: not-implemented
+      x-maturity: production-preview
       summary: 修复接收端后恢复 Webhook 投递
       description: |
         将 PAUSED_DELIVERY_FAILURES endpoint 恢复为 ACTIVE，并对 PENDING delivery 重新启动
@@ -933,13 +933,12 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
-        '501': {$ref: '#/components/responses/NotImplemented'}
 
   '/v1/webhook-endpoints/{webhook_endpoint_id}/deliveries':
     get:
       tags: [Webhooks]
       operationId: listWebhookDeliveries
-      x-maturity: not-implemented
+      x-maturity: production-preview
       summary: 查询 Webhook 投递状态
       parameters:
         - $ref: '#/components/parameters/WebhookEndpointId'
@@ -961,13 +960,12 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '501': {$ref: '#/components/responses/NotImplemented'}
 
   '/v1/webhook-endpoints/{webhook_endpoint_id}/deliveries/{delivery_id}':
     get:
       tags: [Webhooks]
       operationId: getWebhookDelivery
-      x-maturity: not-implemented
+      x-maturity: production-preview
       summary: 获取一个 Webhook 投递及最新 attempt 状态
       parameters:
         - $ref: '#/components/parameters/WebhookEndpointId'
@@ -981,13 +979,12 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
-        '501': {$ref: '#/components/responses/NotImplemented'}
 
   '/v1/webhook-endpoints/{webhook_endpoint_id}/deliveries/{delivery_id}:redeliver':
     post:
       tags: [Webhooks]
       operationId: redeliverWebhookDelivery
-      x-maturity: not-implemented
+      x-maturity: production-preview
       summary: 请求重新投递一个 Webhook 事件
       description: |
         为同一 delivery_id 创建新 attempt。接收方继续按 delivery_id 去重；即使响应丢失，
@@ -1008,13 +1005,12 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
         '410': {$ref: '#/components/responses/Gone'}
-        '501': {$ref: '#/components/responses/NotImplemented'}
 
   '/v1/datasets/{dataset_id}':
     delete:
       tags: [Deletions]
       operationId: deleteDataset
-      x-maturity: not-implemented
+      x-maturity: production-preview
       summary: 启动数据集及派生资源删除 saga
       description: |
         固定采用级联取消策略：接受请求时先使数据集及派生资源对业务读取不可访问，并向所有
@@ -1034,13 +1030,12 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
-        '501': {$ref: '#/components/responses/NotImplemented'}
 
   '/v1/deletions/{deletion_id}':
     get:
       tags: [Deletions]
       operationId: getDeletionJob
-      x-maturity: not-implemented
+      x-maturity: production-preview
       summary: 查询逐存储删除状态
       parameters:
         - $ref: '#/components/parameters/DeletionId'

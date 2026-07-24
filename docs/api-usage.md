@@ -3,9 +3,11 @@
 完整字段以 [OpenAPI 3.1 契约](../openapi/automl-api.yaml) 为准。以下示例只展示一次典型的“上传、观察过程、回答问题、获取结果”调用。
 
 > 当前默认实现是 Milestone 2 local durable：CSV/Parquet 字节会写入本地对象目录，SQLite 会保存
-> 资源、幂等记录和 workflow checkpoint，单个本地 worker 会在重启后继续非终态 Run。它仍不是生产
-> 服务：Bearer token 只是开发租户隔离，未实现 JWT/RLS/DLP/HA，模型 artifact 仅供离线评估。
-> Webhook、审批决定、删除 saga 和模型注册仍属于后续契约，当前管理路由会返回 `501` 或 `404`。
+> 资源、幂等记录和 workflow checkpoint，单个本地 worker 会在重启后继续非终态 Run。它仍不是完整生产
+> 服务：development profile 的 Bearer token 只用于本地租户隔离，模型 artifact 默认仅供离线评估。
+> API 已提供 Webhook endpoint/outbox、审批、模型候选和删除任务控制面。local durable 删除会同步
+> 撤销访问并物理删除本地 dataset/upload 与派生 artifact 字节；正式环境仍需部署 OIDC、
+> PostgreSQL/RLS、S3/KMS、DLP、Webhook dispatcher 及外部存储的异步物理删除 worker。
 
 ## 0. 快速开始
 
@@ -16,6 +18,9 @@ python3 -m pip install -e '.[dev]'
 automl-api
 ```
 
+基础安装包含 scikit-learn。需要本机同时启用 AutoGluon 和 TabPFN 时使用
+`python3 -m pip install -e '.[dev,all-backends]'`；Docker 全量镜像默认安装三个后端。
+
 或使用 Docker/Compose：
 
 ```bash
@@ -24,7 +29,8 @@ docker run --rm -p 127.0.0.1:8000:8000 managed-automl-api:0.7.0
 ```
 
 客户端统一使用 Bearer 认证。development profile 接受任意非空 token，并用 token hash 派生本地租户；
-生产 profile 必须配置 JWT/OIDC 等正式身份参数。
+生产 profile 必须配置 JWT/OIDC 等正式身份参数，但 0.7.0 的 formal production profile 仍会因
+固定失败的 `runtime_adapters` 检查让 `/readyz` 返回 `503`。这些配置不能把当前版本变成生产就绪。
 
 ```bash
 export AUTOML_API=http://127.0.0.1:8000
@@ -241,8 +247,10 @@ curl -sS "$AUTOML_API/v1/runs/run_01/result" \
 - `NO_ELIGIBLE_MODEL`：流程成功，但模型未达到业务/统计门槛；
 - `INCOMPLETE`：失败、取消或过期，仍返回已经提交的部分输出。
 
-当前 local durable profile 的成功训练固定返回 `NO_ELIGIBLE_MODEL`；
-`ELIGIBLE_MODEL_AVAILABLE` 是后续生产门禁与模型注册实现预留的契约分支。
+默认 `production_deploy=DISABLED` 的成功训练返回 `NO_ELIGIBLE_MODEL`。如果创建 Run 时设置
+`production_deploy=REQUIRE_APPROVAL`，训练完成后会进入 `WAITING_APPROVAL`；审批通过后注册
+`ModelCandidate` 并返回 `ELIGIBLE_MODEL_AVAILABLE`。该结果表示控制面候选已批准，不表示已部署
+在线推理服务。
 
 ## 6. 下载大型产物
 
@@ -261,8 +269,8 @@ curl -sS -X POST "$AUTOML_API/v1/artifacts/art_99:download" \
 `download_artifact_file()` 会自动完成 `.part` 续传、Range、ETag、大小和 SHA-256 校验。
 
 M2 的真实模型与报告产物可以这样下载：先从 `MODEL_CARD` 或 `RUN_REPORT` 的 `artifact_refs`
-取 `artifact_id`，再调用上面的 ticket API。即使 Run 成功，`model_disposition` 仍会是
-`NO_ELIGIBLE_MODEL`，因为本地 slice 不执行生产质量门禁。
+取 `artifact_id`，再调用上面的 ticket API。默认 Run 仍返回 `NO_ELIGIBLE_MODEL`；只有显式要求
+生产审批且审批通过的 Run 才会返回 `ELIGIBLE_MODEL_AVAILABLE`。
 
 ## 7. 外部 Agent 平台接入
 
@@ -602,7 +610,6 @@ with AutoMLClient("http://127.0.0.1:8000", token="platform-service-token") as ba
 | 413 | `dataset_too_large` | 压缩/抽样/拆分数据，或调整服务限额 |
 | 422 | `validation_failed`、`budget_limit_exceeded` | 修正请求体或预算 |
 | 429 | `active_run_limit_exceeded`、`tenant_storage_limit_exceeded` | 按 `Retry-After` 退避 |
-| 501 | `capability_not_implemented` | 当前 profile 未实现该能力 |
 
 幂等写入示例：
 
@@ -655,18 +662,19 @@ curl -sS -X POST "$AUTOML_API/v1/runs/run_01/decision-packets/ws_01:answer" \
 - 大文件使用 SDK `download_artifact_file()`，它会自动处理 `.part`、Range 和 SHA-256。
 - ticket 过期后重新申请，不要长期保存短期 URL。
 
-## 13. Webhook（后续契约，当前不可用）
+## 13. Webhook endpoint 与 outbox
 
-下面的签名和投递规则是冻结的后续公开契约，便于客户端提前实现互操作；Milestone 2 当前所有
-Webhook 管理路由返回 `501`，不会创建 endpoint，也不会投递事件。
-不要把本节示例当成当前可调用的能力。
+Webhook endpoint 创建、读取、删除、密钥轮换、启用、delivery outbox 查询和人工重投已经可调用。
+当前 API 负责维护 outbox 记录；实际向接收端发起 HTTP 请求、依据响应更新 attempt、退避和告警，
+需要由独立 dispatcher worker 在生产部署中执行。下面的签名规则是 dispatcher 与接收方的互操作
+约定。
 
 注册 Webhook 时，签名密钥只在创建响应中返回一次：
 
 ```bash
 curl -sS -X POST "$AUTOML_API/v1/webhook-endpoints" \
   -H "Authorization: Bearer $AUTOML_TOKEN" \
-  -H "Idempotency-Key: webhook-ci-0001" \
+  -H "Idempotency-Key: webhook-ci-create-0001" \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://example.internal/automl-events",
@@ -722,7 +730,10 @@ curl -sS "$AUTOML_API/v1/webhook-endpoints/wh_01/deliveries?status=RETRYING,EXHA
   -H "Authorization: Bearer $AUTOML_TOKEN"
 ```
 
-非 2xx 或 10 秒超时会按 full-jitter 指数退避自动重试，最多 20 次或 72 小时。耗尽后 `EXHAUSTED` 就是租户可查询的死信记录，不另设隐藏 DLQ，并在 `exhausted_at` 后保留、允许人工重投 30 天。连续 20 次 attempt 失败后 endpoint 进入 `PAUSED_DELIVERY_FAILURES`，新事件保留为 `PENDING`。修复接收端后恢复投递：
+生产 dispatcher 应在非 2xx 或 10 秒超时时按 full-jitter 指数退避，最多 20 次或 72 小时。耗尽后
+`EXHAUSTED` 是租户可查询的死信记录，不另设隐藏 DLQ，并在 `exhausted_at` 后保留、允许人工重投
+30 天。连续 20 次 attempt 失败后，dispatcher 应将 endpoint 置为 `PAUSED_DELIVERY_FAILURES`，新事件
+保留为 `PENDING`。修复接收端后恢复投递：
 
 ```bash
 curl -sS -X POST "$AUTOML_API/v1/webhook-endpoints/wh_01:enable" \

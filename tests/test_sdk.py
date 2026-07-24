@@ -10,10 +10,11 @@ from automl_sdk import (
     AutoMLClient,
     ConflictError,
     EventCursorExpiredError,
+    NotFoundError,
     PreconditionFailedError,
 )
 
-from .helpers import create_ready_dataset, run_request
+from .helpers import create_ready_dataset, create_waiting_run, run_request
 
 
 def test_sdk_completes_managed_workflow_in_a_small_call_surface(client: TestClient) -> None:
@@ -30,6 +31,9 @@ def test_sdk_completes_managed_workflow_in_a_small_call_surface(client: TestClie
     run = sdk.create_run(run_request(dataset["dataset_version_id"]))
     assert sdk.list_runs()["items"][0]["run_id"] == run["run_id"]
     assert sdk.get_run_stages(run["run_id"])["snapshot_seq"] == run["snapshot_seq"]
+    assert sdk.list_run_experiments(run["run_id"])["items"] == []
+    with pytest.raises(NotFoundError):
+        sdk.get_run_experiment(run["run_id"], "exp_not_registered")
     assert [e["seq"] for e in sdk.iter_run_events(run["run_id"], after_seq=0, limit=2)] == [
         1,
         2,
@@ -102,6 +106,40 @@ def test_sdk_scoped_run_controls(client: TestClient) -> None:
         pass
     else:
         raise AssertionError("a new cancel request against a terminal run should conflict")
+
+
+def test_sdk_exposes_production_control_plane_helpers(client: TestClient) -> None:
+    sdk = AutoMLClient("http://testserver", token="test-tenant-token", http_client=client)
+    endpoint = sdk.create_webhook_endpoint(
+        url="https://agent.example.test/hooks/automl",
+        event_types=["*"],
+        idempotency_key="sdk-webhook-create-0001",
+    )
+    assert endpoint["status"] == "ACTIVE"
+    assert len(endpoint["signing_secret"]) == 43
+    assert sdk.get_webhook_endpoint(endpoint["webhook_endpoint_id"])["status"] == "ACTIVE"
+    rotated = sdk.rotate_webhook_endpoint_secret(
+        endpoint["webhook_endpoint_id"], idempotency_key="sdk-webhook-rotate-0001"
+    )
+    assert rotated["webhook_endpoint_id"] == endpoint["webhook_endpoint_id"]
+    assert sdk.list_webhook_endpoints()["items"]
+
+    create_waiting_run(client, "sdk-webhook-delivery-0001")
+    deliveries = sdk.list_webhook_deliveries(endpoint["webhook_endpoint_id"])
+    delivery = deliveries["items"][0]
+    redelivery = sdk.redeliver_webhook_delivery(
+        endpoint["webhook_endpoint_id"],
+        delivery["delivery_id"],
+        idempotency_key="sdk-webhook-redeliver-0001",
+    )
+    assert redelivery["delivery_id"] == delivery["delivery_id"]
+
+    dataset = create_ready_dataset(client, "sdk-delete-saga-0001")
+    deletion = sdk.delete_dataset(dataset["dataset_id"], idempotency_key="sdk-delete-saga-0001")
+    assert sdk.get_deletion_job(deletion["deletion_id"]) == deletion
+    sdk.delete_webhook_endpoint(
+        endpoint["webhook_endpoint_id"], idempotency_key="sdk-webhook-delete-0001"
+    )
 
 
 def test_sdk_finds_blocking_decision_packet_on_second_cursor_page(
@@ -223,6 +261,12 @@ def test_sdk_lists_available_backends_from_the_agent_manifest() -> None:
         ]
     finally:
         sdk.close()
+
+
+def test_official_sdk_version_is_accepted_by_manifest(client: TestClient) -> None:
+    sdk = AutoMLClient("http://testserver", token="test-tenant-token", http_client=client)
+    manifest = sdk.get_agent_manifest()
+    assert manifest["python_sdk_compatible_versions"] == ">=0.7,<0.8"
 
 
 def test_sdk_retries_retryable_statuses_only_when_write_is_idempotent() -> None:

@@ -10,11 +10,11 @@ development-set model selection, native preprocessing, prediction adapter, and a
 | AutoGluon Tabular | `>=1.5,<1.6` | bounded AutoGluon validation on development data; RF/XT/LR portfolio | CPU=1, GPU=0 by default | deployment-only predictor directory in `tar.gz` |
 | TabPFN | `>=8.1,<8.2` | fold-fitted small-data evaluation, then one development fit | GPU recommended; guarded CPU mode | data-free evaluation metadata JSON; no fitted model export |
 
-The packages are standard service dependencies, so the delivered wheel and normal Docker build
-install all three adapters. The `autogluon`, `tabpfn`, and `all-backends` extras are compatibility
-aliases for installers that already reference those names; they are not the delivery path for these
-backends. Installation does not make TabPFN ready: its model-weight access and license gates are
-checked separately at runtime.
+The service wheel always ships all three adapters, while framework packages are installed by
+profile. The base install includes scikit-learn; `.[autogluon]`, `.[tabpfn]`, or
+`.[all-backends]` add the heavier runtimes. The normal Docker build installs `all-backends`, so its
+manifest can expose all three when their separate runtime gates pass. Installation alone does not
+make TabPFN ready: model-weight access and license gates are checked separately at runtime.
 
 ## AutoGluon
 
@@ -91,7 +91,9 @@ or `tabpfn`. Do not infer readiness from package installation alone. A backend d
 distinguishes `installed` from `available`, returns stable `unavailable_reason` codes, and
 publishes limits, runtime requirements, and the artifact contract.
 
-All three backends currently produce evaluation-only candidates. They do not register a production
-model, host an inference endpoint, or approve deployment. A successful Run therefore still reports
-`model_disposition=NO_ELIGIBLE_MODEL`. Scikit-learn and AutoGluon can return trusted-store model
-artifacts; TabPFN returns only non-exportable evaluation metadata.
+All three backends produce evaluation artifacts and do not host an inference endpoint. The default
+Run therefore reports `model_disposition=NO_ELIGIBLE_MODEL`. With
+`production_deploy=REQUIRE_APPROVAL`, scikit-learn or AutoGluon results can become an approved
+control-plane `ModelCandidate`; this still does not deploy serving infrastructure. Scikit-learn and
+AutoGluon return trusted-store model artifacts, while TabPFN returns only non-exportable evaluation
+metadata and cannot become an exportable serving artifact.

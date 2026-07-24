@@ -187,6 +187,11 @@ class SqliteStore(InMemoryStore):
                 "commands": deepcopy(self._commands),
                 "results": deepcopy(self._results),
                 "artifacts": deepcopy(self._artifacts),
+                "approvals": deepcopy(self._approvals),
+                "models": deepcopy(self._models),
+                "webhook_endpoints": deepcopy(self._webhook_endpoints),
+                "webhook_deliveries": deepcopy(self._webhook_deliveries),
+                "deletions": deepcopy(self._deletions),
                 "idempotency": idempotency,
             }
 
@@ -204,6 +209,13 @@ class SqliteStore(InMemoryStore):
             self._commands = deepcopy(dict(snapshot.get("commands", {})))
             self._results = deepcopy(dict(snapshot.get("results", {})))
             self._artifacts = deepcopy(dict(snapshot.get("artifacts", {})))
+            self._approvals = deepcopy(dict(snapshot.get("approvals", {})))
+            self._models = deepcopy(dict(snapshot.get("models", {})))
+            self._webhook_endpoints = deepcopy(dict(snapshot.get("webhook_endpoints", {})))
+            self._webhook_deliveries = deepcopy(dict(snapshot.get("webhook_deliveries", {})))
+            self._deletions = deepcopy(dict(snapshot.get("deletions", {})))
+            for run_id in self._runs:
+                self._approvals.setdefault(run_id, {})
             self._event_ids = {
                 run_id: {event["event_id"]: event for event in events}
                 for run_id, events in self._events.items()
@@ -387,6 +399,53 @@ class SqliteStore(InMemoryStore):
 
     async def update_artifact(self, artifact_id: str, updates: Mapping[str, Any]) -> JsonDict:
         return await self._durable_mutation(super().update_artifact, artifact_id, updates)
+
+    async def create_approval(self, run_id: str, value: Mapping[str, Any]) -> JsonDict:
+        return await self._durable_mutation(super().create_approval, run_id, value)
+
+    async def update_approval(
+        self, run_id: str, approval_id: str, updates: Mapping[str, Any]
+    ) -> JsonDict:
+        return await self._durable_mutation(super().update_approval, run_id, approval_id, updates)
+
+    async def create_model(self, value: Mapping[str, Any]) -> JsonDict:
+        return await self._durable_mutation(super().create_model, value)
+
+    async def create_webhook_endpoint(self, value: Mapping[str, Any]) -> JsonDict:
+        return await self._durable_mutation(super().create_webhook_endpoint, value)
+
+    async def update_webhook_endpoint(
+        self, webhook_endpoint_id: str, updates: Mapping[str, Any]
+    ) -> JsonDict:
+        return await self._durable_mutation(
+            super().update_webhook_endpoint, webhook_endpoint_id, updates
+        )
+
+    async def create_webhook_delivery(
+        self, webhook_endpoint_id: str, value: Mapping[str, Any]
+    ) -> JsonDict:
+        return await self._durable_mutation(
+            super().create_webhook_delivery, webhook_endpoint_id, value
+        )
+
+    async def update_webhook_delivery(
+        self,
+        webhook_endpoint_id: str,
+        delivery_id: str,
+        updates: Mapping[str, Any],
+    ) -> JsonDict:
+        return await self._durable_mutation(
+            super().update_webhook_delivery,
+            webhook_endpoint_id,
+            delivery_id,
+            updates,
+        )
+
+    async def create_deletion(self, value: Mapping[str, Any]) -> JsonDict:
+        return await self._durable_mutation(super().create_deletion, value)
+
+    async def update_deletion(self, deletion_id: str, updates: Mapping[str, Any]) -> JsonDict:
+        return await self._durable_mutation(super().update_deletion, deletion_id, updates)
 
     async def begin_idempotent_request(
         self, operation: str, key: str, request_fingerprint: str

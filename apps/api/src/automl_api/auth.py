@@ -6,7 +6,7 @@ import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from hashlib import sha256
-from typing import Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from fastapi import Depends, Header
 
@@ -14,6 +14,7 @@ from .errors import APIProblem
 from .security import (
     ActorType,
     HS256JWTVerifier,
+    JWKSJWTVerifier,
     TokenVerificationError,
     TokenVerifier,
     normalize_scope,
@@ -58,6 +59,9 @@ class AuthSettings:
     issuer: str | None = None
     audiences: tuple[str, ...] = ()
     signing_keys: Mapping[str, str | bytes] = field(default_factory=dict, repr=False)
+    jwks_url: str | None = None
+    jwks_json: Mapping[str, Any] | None = field(default=None, repr=False)
+    algorithms: tuple[str, ...] = ("RS256",)
     cursor_secret: str | bytes | None = field(default=None, repr=False)
     leeway_seconds: int = 30
 
@@ -73,7 +77,16 @@ class AuthSettings:
         audiences = tuple(part.strip() for part in audience_value.split(",") if part.strip())
         if not audiences:
             raise AuthConfigurationError("AUTOML_JWT_AUDIENCE cannot be empty.")
-        signing_keys = _read_signing_keys(source)
+        jwks_url = _optional_environment_value(source, "AUTOML_JWKS_URL")
+        jwks_json = _read_jwks_json(source)
+        if jwks_url is not None and jwks_json is not None:
+            raise AuthConfigurationError("Configure AUTOML_JWKS_URL or AUTOML_JWKS_JSON, not both.")
+        if jwks_url is not None or jwks_json is not None:
+            signing_keys = {}
+            algorithms = _read_algorithms(source)
+        else:
+            signing_keys = _read_signing_keys(source)
+            algorithms = ("HS256",)
         cursor_secret = _read_cursor_secret(source)
 
         raw_leeway = source.get("AUTOML_JWT_LEEWAY_SECONDS", "30")
@@ -88,6 +101,9 @@ class AuthSettings:
             issuer=issuer,
             audiences=audiences,
             signing_keys=signing_keys,
+            jwks_url=jwks_url,
+            jwks_json=jwks_json,
+            algorithms=algorithms,
             cursor_secret=cursor_secret,
             leeway_seconds=leeway_seconds,
         )
@@ -163,17 +179,29 @@ def build_authenticator(
         raise AuthConfigurationError("The production cursor signing secret is invalid.") from error
 
     if verifier is None:
-        if settings.issuer is None or not settings.audiences or not settings.signing_keys:
-            raise AuthConfigurationError(
-                "Production authentication requires issuer, audience, and signing keys."
-            )
+        if settings.issuer is None or not settings.audiences:
+            raise AuthConfigurationError("Production authentication requires issuer and audience.")
         try:
-            verifier = HS256JWTVerifier(
-                issuer=settings.issuer,
-                audience=settings.audiences,
-                keys=settings.signing_keys,
-                leeway_seconds=settings.leeway_seconds,
-            )
+            if settings.jwks_url is not None or settings.jwks_json is not None:
+                verifier = JWKSJWTVerifier(
+                    issuer=settings.issuer,
+                    audience=settings.audiences,
+                    algorithms=settings.algorithms,
+                    jwks_url=settings.jwks_url,
+                    jwks_json=settings.jwks_json,
+                    leeway_seconds=settings.leeway_seconds,
+                )
+            else:
+                if not settings.signing_keys:
+                    raise AuthConfigurationError(
+                        "Production HS256 preview authentication requires signing keys."
+                    )
+                verifier = HS256JWTVerifier(
+                    issuer=settings.issuer,
+                    audience=settings.audiences,
+                    keys=settings.signing_keys,
+                    leeway_seconds=settings.leeway_seconds,
+                )
         except ValueError as error:
             raise AuthConfigurationError("The production JWT configuration is invalid.") from error
     return VerifiedTokenAuthenticator(verifier)
@@ -316,6 +344,36 @@ def _required_environment_value(environ: Mapping[str, str], name: str) -> str:
     if value is None or not value.strip():
         raise AuthConfigurationError(f"{name} is required in production mode.")
     return value.strip()
+
+
+def _optional_environment_value(environ: Mapping[str, str], name: str) -> str | None:
+    value = environ.get(name)
+    if value is None or not value.strip():
+        return None
+    return value.strip()
+
+
+def _read_algorithms(environ: Mapping[str, str]) -> tuple[str, ...]:
+    raw_value = environ.get("AUTOML_JWT_ALGORITHMS", "RS256")
+    algorithms = tuple(part.strip() for part in raw_value.split(",") if part.strip())
+    if not algorithms:
+        raise AuthConfigurationError("AUTOML_JWT_ALGORITHMS cannot be empty.")
+    if any(value.upper() == "NONE" or value.upper().startswith("HS") for value in algorithms):
+        raise AuthConfigurationError("JWKS production mode requires asymmetric JWT algorithms.")
+    return algorithms
+
+
+def _read_jwks_json(environ: Mapping[str, str]) -> Mapping[str, Any] | None:
+    raw_value = environ.get("AUTOML_JWKS_JSON")
+    if raw_value is None or not raw_value.strip():
+        return None
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError as error:
+        raise AuthConfigurationError("AUTOML_JWKS_JSON must be a JWKS JSON object.") from error
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("keys"), list):
+        raise AuthConfigurationError("AUTOML_JWKS_JSON must contain a keys array.")
+    return parsed
 
 
 def _read_signing_keys(environ: Mapping[str, str]) -> dict[str, str]:

@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import base64
 from contextlib import asynccontextmanager
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta
 from hashlib import sha256
 from importlib import resources
 from pathlib import Path
@@ -34,16 +36,21 @@ from .models import (
     AgentInterfaceManifest,
     AgentRunContext,
     AnswerDecisionPacketRequest,
+    ApprovalPage,
     Artifact,
     CommandReceipt,
     CreateDatasetRequest,
+    CreateWebhookEndpointRequest,
     CreateRunRequest,
     DatasetUploadSession,
     DatasetVersion,
+    DecideApprovalRequest,
     DecisionPacketPage,
     DecisionPacketStatus,
+    DeletionJob,
     DownloadTicket,
     FinalizeDatasetRequest,
+    ModelCandidate,
     OutputPage,
     OutputResource,
     OutputState,
@@ -56,14 +63,23 @@ from .models import (
     RunStatus,
     SignUploadPartsRequest,
     UploadPartsResponse,
+    WebhookDelivery,
+    WebhookDeliveryPage,
+    WebhookEndpoint,
+    WebhookEndpointCreated,
+    WebhookRedeliveryReceipt,
+    WebhookSecretRotated,
 )
 from .persistence import SqliteStore
+from .production import ProductionSettings
 from .protocol import (
     configure_cursor_secret,
     decode_cursor,
     encode_cursor,
+    iso_now,
     parse_revision_etag,
     request_fingerprint,
+    utcnow,
 )
 from .security import validate_shared_secret
 from .storage import (
@@ -92,7 +108,7 @@ ROOT_DIR = Path(__file__).resolve().parents[4]
 OPENAPI_PATH = ROOT_DIR / "openapi" / "automl-api.yaml"
 ACTIVE_OPENAPI_PATH = ROOT_DIR / "openapi" / "automl-agent-tools.yaml"
 API_VERSION = "v1"
-PYTHON_SDK_COMPATIBLE_VERSIONS = ">=0.6,<0.7"
+PYTHON_SDK_COMPATIBLE_VERSIONS = ">=0.7,<0.8"
 ACTIVE_OPERATION_IDS = [
     "getAgentInterfaceManifest",
     "getAgentRunContext",
@@ -291,6 +307,75 @@ def _unsupported(capability: str) -> APIProblem:
     )
 
 
+def _new_webhook_secret() -> str:
+    return base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode("ascii")
+
+
+def _public_webhook_endpoint(endpoint: dict[str, Any]) -> dict[str, Any]:
+    hidden = {
+        "tenant_id",
+        "signing_secret",
+        "previous_signing_secret",
+        "previous_secret_valid_until",
+    }
+    return {key: value for key, value in endpoint.items() if key not in hidden}
+
+
+def _public_webhook_delivery(delivery: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in delivery.items() if key != "tenant_id"}
+
+
+def _public_approval(approval: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in approval.items() if key != "tenant_id"}
+
+
+def _public_model(model: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in model.items() if key != "tenant_id"}
+
+
+def _public_deletion(deletion: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in deletion.items() if key != "tenant_id"}
+
+
+def _approval_expires_at(approval: dict[str, Any]) -> datetime:
+    raw = approval.get("expires_at")
+    if not isinstance(raw, str):
+        raise APIProblem(409, "approval_expired", "Approval is expired", "Refresh the Run state.")
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise APIProblem(
+            409, "approval_expired", "Approval is expired", "Refresh the Run state."
+        ) from error
+
+
+def _require_human_approval(principal: Principal) -> None:
+    if principal.authentication_mode == "production" and principal.actor_type != "human":
+        raise APIProblem(
+            403,
+            "human_approval_required",
+            "Human approval required",
+            "Production deployment approvals must be decided by a human principal.",
+        )
+
+
+def _completed_stages(stages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    completed_at = iso_now()
+    result: list[dict[str, Any]] = []
+    for stage in stages:
+        item = dict(stage)
+        if item.get("status") not in {"COMPLETED", "SKIPPED"}:
+            item.update(
+                {
+                    "status": "COMPLETED",
+                    "completed_at": completed_at,
+                    "message": "Completed after production approval decision",
+                }
+            )
+        result.append(item)
+    return result
+
+
 def _event_cursor_expired(run_id: str, retained_from: int, position: int) -> APIProblem:
     return APIProblem(
         410,
@@ -453,6 +538,7 @@ def create_app(
     )
 
     limits = RuntimeLimits.from_env()
+    production_settings = ProductionSettings.from_env()
     owns_state = state is None
     if state is None:
         state_root = Path(os.environ.get("AUTOML_STATE_DIR", ".automl-data")).resolve()
@@ -514,6 +600,7 @@ def create_app(
     application.state.backend_registry = service.backend_registry
     application.state.worker = worker
     application.state.runtime_limits = limits
+    application.state.production = production_settings
     install_problem_handlers(application)
 
     @application.exception_handler(RequestValidationError)
@@ -540,15 +627,29 @@ def create_app(
         )
 
     @application.get("/healthz", include_in_schema=False)
-    async def health() -> dict[str, str]:
+    async def health() -> dict[str, Any]:
         mode = "milestone-2-local-durable" if durable_mode else "milestone-1-synthetic"
-        return {"status": "ok", "mode": mode}
+        return {
+            "status": "ok",
+            "mode": mode,
+            "deployment_profile": production_settings.profile,
+        }
 
     @application.get("/readyz", include_in_schema=False)
-    async def readiness() -> dict[str, str]:
+    async def readiness() -> dict[str, Any]:
         if isinstance(state, SqliteStore):
             await state.list_runs()
-        return {"status": "ready"}
+        production = production_settings.manifest()
+        if production_settings.strict and not production_settings.ready:
+            raise APIProblem(
+                503,
+                "production_preflight_failed",
+                "Production preflight failed",
+                "The formal production profile is not fully configured.",
+                retriable=True,
+                extras={"production": production},
+            )
+        return {"status": "ready", "production": production}
 
     @application.get("/openapi.yaml", include_in_schema=False)
     async def canonical_openapi() -> Response:
@@ -1517,58 +1618,848 @@ def create_app(
         raise _not_found("Experiment")
 
     @application.get("/v1/runs/{run_id}/approvals")
-    async def list_approvals(run_id: str, principal: PrincipalDependency) -> dict[str, Any]:
+    async def list_approvals(
+        run_id: str,
+        principal: PrincipalDependency,
+        cursor: str | None = None,
+        limit: Annotated[int | None, Query(ge=1, le=100)] = None,
+    ) -> JSONResponse:
         _authorize_operation(principal, "listRunApprovals")
         await service.get_run(principal, run_id)
-        return _page([], high_watermark=0)
+        approvals = [
+            _public_approval(item)
+            for item in await state.list_approvals(run_id)
+            if item.get("tenant_id") == principal.tenant_id
+        ]
+        approvals.sort(key=lambda item: item["approval_id"])
+        if cursor:
+            if limit is not None:
+                raise APIProblem(
+                    400,
+                    "invalid_cursor",
+                    "Invalid cursor",
+                    "After the first Approval page, send only cursor.",
+                )
+            cursor_data = _validate_cursor(
+                cursor, kind="approvals", principal=principal, parent_id=run_id
+            )
+            high_id = cursor_data.get("high_id")
+            position = cursor_data.get("position")
+            page_size = int(cursor_data.get("limit", 0))
+            high_watermark = int(cursor_data.get("high_watermark", -1))
+            if (
+                not isinstance(high_id, str)
+                or not isinstance(position, str)
+                or page_size < 1
+                or high_watermark < 0
+            ):
+                raise APIProblem(
+                    400, "invalid_cursor", "Invalid cursor", "Cursor payload is invalid."
+                )
+        else:
+            position = ""
+            page_size = limit or 50
+            high_watermark = len(approvals)
+            high_id = approvals[-1]["approval_id"] if approvals else ""
+        window = [item for item in approvals if position < item["approval_id"] <= high_id]
+        selected = window[:page_size]
+        has_more = len(window) > page_size
+        next_cursor = (
+            encode_cursor(
+                {
+                    "kind": "approvals",
+                    "tenant_id": principal.tenant_id,
+                    "parent_id": run_id,
+                    "high_id": high_id,
+                    "position": selected[-1]["approval_id"],
+                    "high_watermark": high_watermark,
+                    "limit": page_size,
+                }
+            )
+            if has_more
+            else None
+        )
+        return JSONResponse(
+            content=_validated(
+                ApprovalPage,
+                {
+                    "items": selected,
+                    "page": {
+                        "next_cursor": next_cursor,
+                        "has_more": has_more,
+                        "high_watermark": high_watermark,
+                    },
+                },
+            )
+        )
 
     @application.post("/v1/runs/{run_id}/approvals/{approval_id}:decide")
     async def decide_approval(
-        run_id: str, approval_id: str, principal: PrincipalDependency
-    ) -> Response:
+        run_id: str,
+        approval_id: str,
+        body: DecideApprovalRequest,
+        request: Request,
+        principal: PrincipalDependency,
+        idempotency_key: IdempotencyKey,
+        if_match: IfMatch,
+    ) -> JSONResponse:
         _authorize_operation(principal, "decideApproval")
-        await service.get_run(principal, run_id)
-        raise _unsupported("Approval decisions")
+        payload = body.model_dump(mode="json")
+        expected_version = parse_revision_etag(if_match, field="evidence_version")
+        if expected_version != int(payload["evidence_version"]):
+            raise APIProblem(
+                412,
+                "stale_revision",
+                "Approval evidence version mismatch",
+                "If-Match must match the request evidence_version.",
+            )
+
+        async def execute() -> tuple[int, dict[str, Any], dict[str, str]]:
+            run = service._owned(await state.get_run(run_id), principal)
+            approval = service._owned(await state.get_approval(run_id, approval_id), principal)
+            _require_human_approval(principal)
+            if approval["status"] != "OPEN" or run["status"] != "WAITING_APPROVAL":
+                raise APIProblem(
+                    409,
+                    "approval_not_open",
+                    "Approval is not open",
+                    "Only the current OPEN approval can be decided.",
+                )
+            if int(approval["evidence_version"]) != expected_version:
+                raise APIProblem(
+                    412,
+                    "stale_revision",
+                    "Approval changed",
+                    "Refresh the Approval and retry against its evidence_version.",
+                    extras={"current_evidence_version": approval["evidence_version"]},
+                )
+            if _approval_expires_at(approval) <= utcnow():
+                await state.update_approval(
+                    run_id,
+                    approval_id,
+                    {
+                        "status": "EXPIRED",
+                        "evidence_version": int(approval["evidence_version"]) + 1,
+                    },
+                )
+                raise APIProblem(
+                    409,
+                    "approval_expired",
+                    "Approval is expired",
+                    "The production approval expired before a decision was recorded.",
+                )
+            decision = payload["decision"]
+            status = {
+                "APPROVE": "APPROVED",
+                "REQUEST_CHANGES": "CHANGES_REQUESTED",
+                "REJECT": "REJECTED",
+            }[decision]
+            await state.update_approval(
+                run_id,
+                approval_id,
+                {
+                    "status": status,
+                    "decision_reason": payload["reason"],
+                    "evidence_version": int(approval["evidence_version"]) + 1,
+                },
+            )
+            command = await state.create_command(
+                {
+                    "tenant_id": principal.tenant_id,
+                    "run_id": run_id,
+                    "type": decision,
+                    "status": "SUCCEEDED",
+                    "submitted_at": iso_now(),
+                    "completed_at": iso_now(),
+                    "resulting_run_revision": None,
+                    "problem": None,
+                    "links": {"self": "", "run": f"/v1/runs/{run_id}"},
+                }
+            )
+            await state.update_command(
+                command["command_id"],
+                {
+                    "links": {
+                        "self": f"/v1/commands/{command['command_id']}",
+                        "run": f"/v1/runs/{run_id}",
+                    }
+                },
+            )
+            command = await state.get_command(command["command_id"])
+            assert command is not None
+
+            if decision == "APPROVE":
+                candidate = run.get("pending_model_candidate")
+                if candidate:
+                    model = await state.create_model(
+                        {
+                            **candidate,
+                            "tenant_id": principal.tenant_id,
+                            "created_at": iso_now(),
+                        }
+                    )
+                    outputs = await state.list_outputs(run_id)
+                    await state.set_result(
+                        run_id,
+                        {
+                            "result_manifest_id": state.new_id("result"),
+                            "run_id": run_id,
+                            "outcome": "SUCCEEDED",
+                            "model_disposition": "ELIGIBLE_MODEL_AVAILABLE",
+                            "summary": "Production deployment approval was granted.",
+                            "backend_id": run.get("backend_id"),
+                            "backend_version": run.get("backend_version"),
+                            "engine_version": run.get("method_version"),
+                            "output_refs": [service._output_ref(output) for output in outputs],
+                            "partial": False,
+                            "eligible_model": {
+                                "model_id": model["model_id"],
+                                "href": f"/v1/models/{model['model_id']}",
+                            },
+                            "reason": None,
+                            "completed_at": iso_now(),
+                        },
+                    )
+                updated = await state.update_run(
+                    run_id,
+                    {
+                        "phase": "PACKAGE",
+                        "status": "TERMINAL",
+                        "outcome": "SUCCEEDED",
+                        "execution_step": "COMPLETED",
+                        "progress": service._progress(100, "COMPLETED", "Run completed"),
+                        "stages": _completed_stages(run["stages"]),
+                        "blocking": {"decision_packet_ids": [], "approval_ids": []},
+                        "available_actions": [],
+                        "updated_at": iso_now(),
+                    },
+                    expected_revision=run["run_revision"],
+                    bump_revision=True,
+                )
+                updated = await service._emit(
+                    updated,
+                    "run.completed.v1",
+                    {"outcome": "SUCCEEDED", "result_href": f"/v1/runs/{run_id}/result"},
+                )
+                await state.update_command(
+                    command["command_id"],
+                    {"resulting_run_revision": updated["run_revision"]},
+                )
+            else:
+                await state.set_result(
+                    run_id,
+                    {
+                        "result_manifest_id": state.new_id("result"),
+                        "run_id": run_id,
+                        "outcome": "SUCCEEDED",
+                        "model_disposition": "NO_ELIGIBLE_MODEL",
+                        "summary": "Production deployment approval was not granted.",
+                        "backend_id": run.get("backend_id"),
+                        "backend_version": run.get("backend_version"),
+                        "engine_version": run.get("method_version"),
+                        "output_refs": [
+                            service._output_ref(output)
+                            for output in await state.list_outputs(run_id)
+                        ],
+                        "partial": False,
+                        "eligible_model": None,
+                        "reason": {
+                            "code": "PRODUCTION_APPROVAL_NOT_GRANTED",
+                            "message": payload["reason"],
+                            "retriable": decision == "REQUEST_CHANGES",
+                            "failed_gates": [status],
+                            "evidence_refs": approval.get("evidence_refs", []),
+                            "remediation": ["Create a new Run after resolving approval feedback."],
+                        },
+                        "completed_at": iso_now(),
+                    },
+                )
+                updated = await state.update_run(
+                    run_id,
+                    {
+                        "phase": "PACKAGE",
+                        "status": "TERMINAL",
+                        "outcome": "SUCCEEDED",
+                        "execution_step": "COMPLETED",
+                        "progress": service._progress(100, "COMPLETED", "Run completed"),
+                        "stages": _completed_stages(run["stages"]),
+                        "blocking": {"decision_packet_ids": [], "approval_ids": []},
+                        "available_actions": [],
+                        "updated_at": iso_now(),
+                    },
+                    expected_revision=run["run_revision"],
+                    bump_revision=True,
+                )
+                updated = await service._emit(
+                    updated,
+                    "run.completed.v1",
+                    {"outcome": "SUCCEEDED", "result_href": f"/v1/runs/{run_id}/result"},
+                )
+                await state.update_command(
+                    command["command_id"],
+                    {"resulting_run_revision": updated["run_revision"]},
+                )
+            command = await state.get_command(command["command_id"])
+            assert command is not None
+            return 202, _validated(CommandReceipt, command), {"Retry-After": "1"}
+
+        return await _idempotent(
+            state=state,
+            operation_id="decideApproval",
+            principal=principal,
+            key=idempotency_key,
+            request=request,
+            body=payload,
+            execute=execute,
+        )
 
     @application.get("/v1/models/{model_id}")
-    async def get_model(model_id: str, principal: PrincipalDependency) -> Response:
+    async def get_model(model_id: str, principal: PrincipalDependency) -> JSONResponse:
         _authorize_operation(principal, "getModelCandidate")
-        raise _not_found("Model candidate")
+        model = service._owned(await state.get_model(model_id), principal)
+        model_run = service._owned(await state.get_run(model["run_id"]), principal)
+        version = service._owned(
+            await state.get_dataset_version(model_run["dataset_version_id"]), principal
+        )
+        if version.get("status") == "DELETED":
+            raise _not_found("Model candidate")
+        return JSONResponse(content=_validated(ModelCandidate, _public_model(model)))
 
-    @application.api_route(
-        "/v1/webhook-endpoints{remaining_path:path}",
-        methods=["GET", "POST", "DELETE"],
+    @application.post("/v1/webhook-endpoints", status_code=201)
+    async def create_webhook_endpoint(
+        body: CreateWebhookEndpointRequest,
+        request: Request,
+        principal: PrincipalDependency,
+        idempotency_key: IdempotencyKey,
+    ) -> JSONResponse:
+        _authorize_operation(principal, "createWebhookEndpoint")
+        payload = body.model_dump(mode="json")
+
+        async def execute() -> tuple[int, dict[str, Any], dict[str, str]]:
+            secret = _new_webhook_secret()
+            endpoint = await state.create_webhook_endpoint(
+                {
+                    "tenant_id": principal.tenant_id,
+                    "url": payload["url"],
+                    "event_types": payload["event_types"],
+                    "description": payload.get("description"),
+                    "status": "ACTIVE",
+                    "status_reason": None,
+                    "paused_at": None,
+                    "signature_version": "v1",
+                    "replay_window_seconds": 300,
+                    "signing_secret": secret,
+                    "previous_signing_secret": None,
+                    "previous_secret_valid_until": None,
+                    "created_at": iso_now(),
+                }
+            )
+            public = {**_public_webhook_endpoint(endpoint), "signing_secret": secret}
+            return 201, _validated(WebhookEndpointCreated, public), {}
+
+        return await _idempotent(
+            state=state,
+            operation_id="createWebhookEndpoint",
+            principal=principal,
+            key=idempotency_key,
+            request=request,
+            body=payload,
+            execute=execute,
+        )
+
+    @application.get("/v1/webhook-endpoints")
+    async def list_webhook_endpoints(
+        principal: PrincipalDependency,
+        cursor: str | None = None,
+        limit: Annotated[int | None, Query(ge=1, le=100)] = None,
+    ) -> JSONResponse:
+        _authorize_operation(principal, "listWebhookEndpoints")
+        endpoints = [
+            _public_webhook_endpoint(item)
+            for item in await state.list_webhook_endpoints(principal.tenant_id)
+        ]
+        endpoints.sort(key=lambda item: item["webhook_endpoint_id"])
+        if cursor:
+            if limit is not None:
+                raise APIProblem(
+                    400,
+                    "invalid_cursor",
+                    "Invalid cursor",
+                    "After the first Webhook page, send only cursor.",
+                )
+            cursor_data = _validate_cursor(cursor, kind="webhook-endpoints", principal=principal)
+            high_id = cursor_data.get("high_id")
+            position = cursor_data.get("position")
+            page_size = int(cursor_data.get("limit", 0))
+            high_watermark = int(cursor_data.get("high_watermark", -1))
+            if (
+                not isinstance(high_id, str)
+                or not isinstance(position, str)
+                or page_size < 1
+                or high_watermark < 0
+            ):
+                raise APIProblem(
+                    400, "invalid_cursor", "Invalid cursor", "Cursor payload is invalid."
+                )
+        else:
+            position = ""
+            page_size = limit or 50
+            high_watermark = len(endpoints)
+            high_id = endpoints[-1]["webhook_endpoint_id"] if endpoints else ""
+        window = [item for item in endpoints if position < item["webhook_endpoint_id"] <= high_id]
+        selected = window[:page_size]
+        has_more = len(window) > page_size
+        next_cursor = (
+            encode_cursor(
+                {
+                    "kind": "webhook-endpoints",
+                    "tenant_id": principal.tenant_id,
+                    "high_id": high_id,
+                    "position": selected[-1]["webhook_endpoint_id"],
+                    "high_watermark": high_watermark,
+                    "limit": page_size,
+                }
+            )
+            if has_more
+            else None
+        )
+        return JSONResponse(
+            content={
+                "items": [_validated(WebhookEndpoint, item) for item in selected],
+                "page": {
+                    "next_cursor": next_cursor,
+                    "has_more": has_more,
+                    "high_watermark": high_watermark,
+                },
+            }
+        )
+
+    @application.get("/v1/webhook-endpoints/{webhook_endpoint_id}")
+    async def get_webhook_endpoint(
+        webhook_endpoint_id: str, principal: PrincipalDependency
+    ) -> JSONResponse:
+        _authorize_operation(principal, "getWebhookEndpoint")
+        endpoint = service._owned(await state.get_webhook_endpoint(webhook_endpoint_id), principal)
+        return JSONResponse(content=_validated(WebhookEndpoint, _public_webhook_endpoint(endpoint)))
+
+    @application.delete("/v1/webhook-endpoints/{webhook_endpoint_id}", status_code=204)
+    async def delete_webhook_endpoint(
+        webhook_endpoint_id: str,
+        request: Request,
+        principal: PrincipalDependency,
+        idempotency_key: IdempotencyKey,
+    ) -> JSONResponse:
+        _authorize_operation(principal, "deleteWebhookEndpoint")
+
+        async def execute() -> tuple[int, dict[str, Any], dict[str, str]]:
+            endpoint = service._owned(
+                await state.get_webhook_endpoint(webhook_endpoint_id), principal
+            )
+            if endpoint["status"] != "DISABLED":
+                await state.update_webhook_endpoint(
+                    webhook_endpoint_id,
+                    {
+                        "status": "DISABLED",
+                        "status_reason": "Deleted by API request.",
+                        "paused_at": iso_now(),
+                    },
+                )
+            return 204, {}, {}
+
+        return await _idempotent(
+            state=state,
+            operation_id="deleteWebhookEndpoint",
+            principal=principal,
+            key=idempotency_key,
+            request=request,
+            body=None,
+            execute=execute,
+        )
+
+    @application.post("/v1/webhook-endpoints/{webhook_endpoint_id}:rotate-secret", status_code=201)
+    async def rotate_webhook_endpoint_secret(
+        webhook_endpoint_id: str,
+        request: Request,
+        principal: PrincipalDependency,
+        idempotency_key: IdempotencyKey,
+    ) -> JSONResponse:
+        _authorize_operation(principal, "rotateWebhookEndpointSecret")
+
+        async def execute() -> tuple[int, dict[str, Any], dict[str, str]]:
+            endpoint = service._owned(
+                await state.get_webhook_endpoint(webhook_endpoint_id), principal
+            )
+            if endpoint["status"] == "DISABLED":
+                raise APIProblem(
+                    409,
+                    "webhook_disabled",
+                    "Webhook endpoint is disabled",
+                    "Enable or recreate the endpoint before rotating its secret.",
+                )
+            new_secret = _new_webhook_secret()
+            valid_until = (utcnow() + timedelta(seconds=300)).isoformat().replace("+00:00", "Z")
+            await state.update_webhook_endpoint(
+                webhook_endpoint_id,
+                {
+                    "signing_secret": new_secret,
+                    "previous_signing_secret": endpoint.get("signing_secret"),
+                    "previous_secret_valid_until": valid_until,
+                },
+            )
+            return (
+                201,
+                _validated(
+                    WebhookSecretRotated,
+                    {
+                        "webhook_endpoint_id": webhook_endpoint_id,
+                        "signing_secret": new_secret,
+                        "previous_secret_valid_until": valid_until,
+                        "created_at": iso_now(),
+                    },
+                ),
+                {},
+            )
+
+        return await _idempotent(
+            state=state,
+            operation_id="rotateWebhookEndpointSecret",
+            principal=principal,
+            key=idempotency_key,
+            request=request,
+            body=None,
+            execute=execute,
+        )
+
+    @application.post("/v1/webhook-endpoints/{webhook_endpoint_id}:enable")
+    async def enable_webhook_endpoint(
+        webhook_endpoint_id: str,
+        request: Request,
+        principal: PrincipalDependency,
+        idempotency_key: IdempotencyKey,
+    ) -> JSONResponse:
+        _authorize_operation(principal, "enableWebhookEndpoint")
+
+        async def execute() -> tuple[int, dict[str, Any], dict[str, str]]:
+            endpoint = service._owned(
+                await state.get_webhook_endpoint(webhook_endpoint_id), principal
+            )
+            if endpoint["status"] != "ACTIVE":
+                endpoint = await state.update_webhook_endpoint(
+                    webhook_endpoint_id,
+                    {"status": "ACTIVE", "status_reason": None, "paused_at": None},
+                )
+            return 200, _validated(WebhookEndpoint, _public_webhook_endpoint(endpoint)), {}
+
+        return await _idempotent(
+            state=state,
+            operation_id="enableWebhookEndpoint",
+            principal=principal,
+            key=idempotency_key,
+            request=request,
+            body=None,
+            execute=execute,
+        )
+
+    @application.get("/v1/webhook-endpoints/{webhook_endpoint_id}/deliveries")
+    async def list_webhook_deliveries(
+        webhook_endpoint_id: str,
+        principal: PrincipalDependency,
+        cursor: str | None = None,
+        limit: Annotated[int | None, Query(ge=1, le=100)] = None,
+        status: str | None = None,
+    ) -> JSONResponse:
+        _authorize_operation(principal, "listWebhookDeliveries")
+        endpoint = service._owned(await state.get_webhook_endpoint(webhook_endpoint_id), principal)
+        deliveries = [
+            _public_webhook_delivery(item)
+            for item in await state.list_webhook_deliveries(endpoint["webhook_endpoint_id"])
+            if item.get("tenant_id") == principal.tenant_id
+        ]
+        statuses = _csv_values(status)
+        if statuses is not None:
+            allowed = {"PENDING", "DELIVERING", "SUCCEEDED", "RETRYING", "EXHAUSTED"}
+            _validate_filter(statuses, allowed, name="Webhook delivery status")
+            deliveries = [item for item in deliveries if item["status"] in set(statuses)]
+        deliveries.sort(key=lambda item: item["delivery_id"])
+        if cursor:
+            if limit is not None or status is not None:
+                raise APIProblem(
+                    400,
+                    "invalid_cursor",
+                    "Invalid cursor",
+                    "After the first Delivery page, send only cursor.",
+                )
+            cursor_data = _validate_cursor(
+                cursor,
+                kind="webhook-deliveries",
+                principal=principal,
+                parent_id=webhook_endpoint_id,
+            )
+            high_id = cursor_data.get("high_id")
+            position = cursor_data.get("position")
+            page_size = int(cursor_data.get("limit", 0))
+            high_watermark = int(cursor_data.get("high_watermark", -1))
+            statuses = cursor_data.get("statuses")
+            if (
+                not isinstance(high_id, str)
+                or not isinstance(position, str)
+                or page_size < 1
+                or high_watermark < 0
+            ):
+                raise APIProblem(
+                    400, "invalid_cursor", "Invalid cursor", "Cursor payload is invalid."
+                )
+            if statuses:
+                deliveries = [item for item in deliveries if item["status"] in set(statuses)]
+        else:
+            position = ""
+            page_size = limit or 50
+            high_watermark = len(deliveries)
+            high_id = deliveries[-1]["delivery_id"] if deliveries else ""
+        window = [item for item in deliveries if position < item["delivery_id"] <= high_id]
+        selected = window[:page_size]
+        has_more = len(window) > page_size
+        next_cursor = (
+            encode_cursor(
+                {
+                    "kind": "webhook-deliveries",
+                    "tenant_id": principal.tenant_id,
+                    "parent_id": webhook_endpoint_id,
+                    "high_id": high_id,
+                    "position": selected[-1]["delivery_id"],
+                    "high_watermark": high_watermark,
+                    "limit": page_size,
+                    "statuses": statuses,
+                }
+            )
+            if has_more
+            else None
+        )
+        return JSONResponse(
+            content=_validated(
+                WebhookDeliveryPage,
+                {
+                    "items": selected,
+                    "page": {
+                        "next_cursor": next_cursor,
+                        "has_more": has_more,
+                        "high_watermark": high_watermark,
+                    },
+                },
+            )
+        )
+
+    @application.get("/v1/webhook-endpoints/{webhook_endpoint_id}/deliveries/{delivery_id}")
+    async def get_webhook_delivery(
+        webhook_endpoint_id: str,
+        delivery_id: str,
+        principal: PrincipalDependency,
+    ) -> JSONResponse:
+        _authorize_operation(principal, "getWebhookDelivery")
+        endpoint = service._owned(await state.get_webhook_endpoint(webhook_endpoint_id), principal)
+        delivery = service._owned(
+            await state.get_webhook_delivery(endpoint["webhook_endpoint_id"], delivery_id),
+            principal,
+        )
+        return JSONResponse(content=_validated(WebhookDelivery, _public_webhook_delivery(delivery)))
+
+    @application.post(
+        "/v1/webhook-endpoints/{webhook_endpoint_id}/deliveries/{delivery_id}:redeliver",
+        status_code=202,
     )
-    async def webhooks_not_implemented(
-        remaining_path: str, principal: PrincipalDependency, request: Request
-    ) -> Response:
-        operation_id = {
-            ("POST", ""): "createWebhookEndpoint",
-            ("GET", ""): "listWebhookEndpoints",
-            ("GET", "/"): "listWebhookEndpoints",
-            ("GET", "/{id}"): "getWebhookEndpoint",
-            ("DELETE", "/{id}"): "deleteWebhookEndpoint",
-            ("POST", "/{id}:rotate-secret"): "rotateWebhookEndpointSecret",
-            ("POST", "/{id}:enable"): "enableWebhookEndpoint",
-            ("GET", "/{id}/deliveries"): "listWebhookDeliveries",
-            ("GET", "/{id}/deliveries/{id}"): "getWebhookDelivery",
-            ("POST", "/{id}/deliveries/{id}:redeliver"): "redeliverWebhookDelivery",
-        }.get((request.method, _webhook_route_shape(remaining_path)))
-        if operation_id is not None:
-            _authorize_operation(principal, operation_id)
-        raise _unsupported("Webhook management")
+    async def redeliver_webhook_delivery(
+        webhook_endpoint_id: str,
+        delivery_id: str,
+        request: Request,
+        principal: PrincipalDependency,
+        idempotency_key: IdempotencyKey,
+    ) -> JSONResponse:
+        _authorize_operation(principal, "redeliverWebhookDelivery")
+
+        async def execute() -> tuple[int, dict[str, Any], dict[str, str]]:
+            endpoint = service._owned(
+                await state.get_webhook_endpoint(webhook_endpoint_id), principal
+            )
+            if endpoint["status"] != "ACTIVE":
+                raise APIProblem(
+                    409,
+                    "webhook_not_active",
+                    "Webhook endpoint is not active",
+                    "Enable the endpoint before requesting redelivery.",
+                )
+            delivery = service._owned(
+                await state.get_webhook_delivery(endpoint["webhook_endpoint_id"], delivery_id),
+                principal,
+            )
+            if delivery["status"] not in {"PENDING", "RETRYING", "EXHAUSTED"}:
+                raise APIProblem(
+                    409,
+                    "delivery_not_redeliverable",
+                    "Delivery is not redeliverable",
+                    "Only pending, retrying, or exhausted deliveries can be redelivered.",
+                )
+            await state.update_webhook_delivery(
+                webhook_endpoint_id,
+                delivery_id,
+                {
+                    "status": "PENDING",
+                    "attempt_count": int(delivery["attempt_count"]) + 1,
+                    "next_attempt_at": iso_now(),
+                    "last_problem": None,
+                },
+            )
+            redelivery_id = state.new_id("redelivery")
+            return (
+                202,
+                _validated(
+                    WebhookRedeliveryReceipt,
+                    {
+                        "redelivery_id": redelivery_id,
+                        "delivery_id": delivery_id,
+                        "status": "ACCEPTED",
+                        "submitted_at": iso_now(),
+                        "delivery_href": (
+                            f"/v1/webhook-endpoints/{webhook_endpoint_id}/deliveries/{delivery_id}"
+                        ),
+                    },
+                ),
+                {"Retry-After": "1"},
+            )
+
+        return await _idempotent(
+            state=state,
+            operation_id="redeliverWebhookDelivery",
+            principal=principal,
+            key=idempotency_key,
+            request=request,
+            body=None,
+            execute=execute,
+        )
 
     @application.delete("/v1/datasets/{dataset_id}")
-    async def delete_dataset(dataset_id: str, principal: PrincipalDependency) -> Response:
+    async def delete_dataset(
+        dataset_id: str,
+        request: Request,
+        principal: PrincipalDependency,
+        idempotency_key: IdempotencyKey,
+    ) -> JSONResponse:
         _authorize_operation(principal, "deleteDataset")
-        dataset = await state.get_dataset(dataset_id)
-        service._owned(dataset, principal)
-        raise _unsupported("Dataset deletion")
+
+        async def execute() -> tuple[int, dict[str, Any], dict[str, str]]:
+            dataset = service._owned(await state.get_dataset(dataset_id), principal)
+            versions = [
+                item
+                for item in await state.list_dataset_versions(dataset_id)
+                if item.get("tenant_id") == principal.tenant_id
+            ]
+            version_ids = {item["dataset_version_id"] for item in versions}
+            runs = [
+                item
+                for item in await state.list_runs()
+                if item.get("tenant_id") == principal.tenant_id
+                and item.get("dataset_version_id") in version_ids
+            ]
+            affected_run_ids = sorted(item["run_id"] for item in runs)
+            now = iso_now()
+            deletion = await state.create_deletion(
+                {
+                    "tenant_id": principal.tenant_id,
+                    "dataset_id": dataset["dataset_id"],
+                    "status": "RUNNING",
+                    "affected_run_ids": affected_run_ids,
+                    "stores": [
+                        {"name": "metadata", "status": "DELETING", "verified_at": None},
+                        {"name": "object_store", "status": "DELETING", "verified_at": None},
+                        {"name": "model_registry", "status": "DELETING", "verified_at": None},
+                    ],
+                    "created_at": now,
+                    "completed_at": None,
+                }
+            )
+            try:
+                # Revoke control-plane access before deleting bytes so any existing ticket or
+                # concurrent request cannot read a resource after deletion is accepted.
+                await state.update_dataset(dataset_id, {"deleted_at": now})
+                for version in versions:
+                    await state.update_dataset_version(
+                        version["dataset_version_id"],
+                        {"status": "DELETED", "updated_at": now},
+                    )
+                artifacts = []
+                for run in runs:
+                    artifacts.extend(await state.list_artifacts(run_id=run["run_id"]))
+                for artifact in artifacts:
+                    await state.update_artifact(artifact["artifact_id"], {"state": "DELETING"})
+                for run in runs:
+                    if run.get("status") != "TERMINAL":
+                        await service.cancel(principal, run["run_id"])
+
+                for version in versions:
+                    await blob_store.delete_dataset_version(
+                        tenant_id=principal.tenant_id,
+                        dataset_version_id=version["dataset_version_id"],
+                    )
+                for artifact in artifacts:
+                    await blob_store.delete_key(str(artifact.get("blob_key", "")))
+                    await state.update_artifact(artifact["artifact_id"], {"state": "DELETED"})
+
+                completed_at = iso_now()
+                deletion = await state.update_deletion(
+                    deletion["deletion_id"],
+                    {
+                        "status": "COMPLETED",
+                        "stores": [
+                            {"name": "metadata", "status": "DELETED", "verified_at": completed_at},
+                            {
+                                "name": "object_store",
+                                "status": "DELETED",
+                                "verified_at": completed_at,
+                            },
+                            {
+                                "name": "model_registry",
+                                "status": "INACCESSIBLE",
+                                "verified_at": completed_at,
+                            },
+                        ],
+                        "completed_at": completed_at,
+                    },
+                )
+            except Exception:
+                failed_at = iso_now()
+                await state.update_deletion(
+                    deletion["deletion_id"],
+                    {
+                        "status": "FAILED",
+                        "stores": [
+                            {"name": "metadata", "status": "FAILED", "verified_at": failed_at},
+                            {"name": "object_store", "status": "FAILED", "verified_at": failed_at},
+                            {
+                                "name": "model_registry",
+                                "status": "FAILED",
+                                "verified_at": failed_at,
+                            },
+                        ],
+                        "completed_at": failed_at,
+                    },
+                )
+                raise
+            return 202, _validated(DeletionJob, _public_deletion(deletion)), {"Retry-After": "1"}
+
+        return await _idempotent(
+            state=state,
+            operation_id="deleteDataset",
+            principal=principal,
+            key=idempotency_key,
+            request=request,
+            body=None,
+            execute=execute,
+        )
 
     @application.get("/v1/deletions/{deletion_id}")
-    async def get_deletion(deletion_id: str, principal: PrincipalDependency) -> Response:
+    async def get_deletion(deletion_id: str, principal: PrincipalDependency) -> JSONResponse:
         _authorize_operation(principal, "getDeletionJob")
-        raise _not_found("Deletion job")
+        deletion = service._owned(await state.get_deletion(deletion_id), principal)
+        return JSONResponse(content=_validated(DeletionJob, _public_deletion(deletion)))
 
     return application
 

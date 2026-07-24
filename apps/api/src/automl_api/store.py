@@ -146,6 +146,18 @@ class InMemoryStore:
         "mdl": "mdl",
         "approval": "apr",
         "apr": "apr",
+        "webhook_endpoint": "wh",
+        "webhook_endpoints": "wh",
+        "wh": "wh",
+        "webhook_delivery": "whd",
+        "webhook_deliveries": "whd",
+        "whd": "whd",
+        "deletion": "del",
+        "deletions": "del",
+        "del": "del",
+        "redelivery": "redel",
+        "redeliveries": "redel",
+        "redel": "redel",
     }
 
     def __init__(self) -> None:
@@ -161,6 +173,11 @@ class InMemoryStore:
         self._commands: dict[str, JsonDict] = {}
         self._results: dict[str, JsonDict] = {}
         self._artifacts: dict[str, JsonDict] = {}
+        self._approvals: dict[str, dict[str, JsonDict]] = {}
+        self._models: dict[str, JsonDict] = {}
+        self._webhook_endpoints: dict[str, JsonDict] = {}
+        self._webhook_deliveries: dict[str, dict[str, JsonDict]] = {}
+        self._deletions: dict[str, JsonDict] = {}
         self._idempotency: dict[tuple[str, str], _IdempotencyRecord] = {}
         self._event_conditions: dict[tuple[str, asyncio.AbstractEventLoop], asyncio.Condition] = {}
         self._idempotency_conditions: dict[
@@ -355,6 +372,7 @@ class InMemoryStore:
             self._event_ids[run_id] = {}
             self._outputs[run_id] = {}
             self._decision_packets[run_id] = {}
+            self._approvals[run_id] = {}
             return created
 
     async def get_run(self, run_id: str) -> JsonDict | None:
@@ -423,9 +441,51 @@ class InMemoryStore:
         run["snapshot_seq"] = next_seq
         return deepcopy(event), True
 
+    def _append_webhook_deliveries_locked(self, event: Mapping[str, Any]) -> None:
+        run_id = str(event["run_id"])
+        run = self._runs[run_id]
+        tenant_id = run.get("tenant_id")
+        event_type = event.get("type")
+        occurred_at = event.get("occurred_at")
+        for endpoint in self._webhook_endpoints.values():
+            if endpoint.get("tenant_id") != tenant_id or endpoint.get("status") != "ACTIVE":
+                continue
+            event_types = set(endpoint.get("event_types") or [])
+            if "*" not in event_types and event_type not in event_types:
+                continue
+            endpoint_id = str(endpoint["webhook_endpoint_id"])
+            deliveries = self._webhook_deliveries.setdefault(endpoint_id, {})
+            if any(item.get("event_id") == event.get("event_id") for item in deliveries.values()):
+                continue
+            self._create_locked(
+                deliveries,
+                {
+                    "tenant_id": tenant_id,
+                    "event_id": event["event_id"],
+                    "event_type": event_type,
+                    "run_id": run_id,
+                    "status": "PENDING",
+                    "attempt_count": 0,
+                    "first_attempt_at": None,
+                    "next_attempt_at": occurred_at,
+                    "last_response_status": None,
+                    "last_problem": None,
+                    "created_at": occurred_at,
+                    "delivered_at": None,
+                    "exhausted_at": None,
+                    "redeliver_until": None,
+                },
+                id_field="delivery_id",
+                kind="webhook_delivery",
+                resource="webhook_delivery",
+                fixed_fields={"webhook_endpoint_id": endpoint_id},
+            )
+
     async def append_event(self, run_id: str, value: Mapping[str, Any]) -> JsonDict:
         with self._lock:
             event, created = self._append_event_locked(run_id, value)
+            if created:
+                self._append_webhook_deliveries_locked(event)
             conditions = self._event_conditions_for_run_locked(run_id) if created else []
         if created:
             self._schedule_notifications(conditions)
@@ -457,6 +517,8 @@ class InMemoryStore:
             event_value = self._mapping(event, name="event")
             event_value["run_revision"] = current["run_revision"]
             stored_event, created = self._append_event_locked(run_id, event_value)
+            if created:
+                self._append_webhook_deliveries_locked(stored_event)
             conditions = self._event_conditions_for_run_locked(run_id) if created else []
             stored_run = deepcopy(current)
         if created:
@@ -729,6 +791,182 @@ class InMemoryStore:
                 values = (value for value in values if value.get("run_id") == run_id)
             return deepcopy(list(values))
 
+    async def create_approval(self, run_id: str, value: Mapping[str, Any]) -> JsonDict:
+        with self._lock:
+            if run_id not in self._runs:
+                raise ResourceNotFoundError("run", run_id)
+            self._approvals.setdefault(run_id, {})
+            return self._create_locked(
+                self._approvals[run_id],
+                value,
+                id_field="approval_id",
+                kind="approval",
+                resource="approval",
+                fixed_fields={"run_id": run_id},
+            )
+
+    async def get_approval(self, run_id: str, approval_id: str) -> JsonDict | None:
+        with self._lock:
+            if run_id not in self._runs:
+                raise ResourceNotFoundError("run", run_id)
+            return self._get_locked(self._approvals.setdefault(run_id, {}), approval_id)
+
+    async def update_approval(
+        self, run_id: str, approval_id: str, updates: Mapping[str, Any]
+    ) -> JsonDict:
+        with self._lock:
+            if run_id not in self._runs:
+                raise ResourceNotFoundError("run", run_id)
+            supplied_run_id = updates.get("run_id", run_id)
+            if supplied_run_id != run_id:
+                raise ValueError("approval.run_id cannot be changed")
+            return self._update_locked(
+                self._approvals.setdefault(run_id, {}),
+                approval_id,
+                updates,
+                id_field="approval_id",
+                resource="approval",
+            )
+
+    async def list_approvals(self, run_id: str) -> list[JsonDict]:
+        with self._lock:
+            if run_id not in self._runs:
+                raise ResourceNotFoundError("run", run_id)
+            return deepcopy(list(self._approvals.setdefault(run_id, {}).values()))
+
+    async def create_model(self, value: Mapping[str, Any]) -> JsonDict:
+        with self._lock:
+            item = self._mapping(value, name="model")
+            run_id = item.get("run_id")
+            if run_id is not None and run_id not in self._runs:
+                raise ResourceNotFoundError("run", str(run_id))
+            return self._create_locked(
+                self._models,
+                item,
+                id_field="model_id",
+                kind="model",
+                resource="model",
+            )
+
+    async def get_model(self, model_id: str) -> JsonDict | None:
+        with self._lock:
+            return self._get_locked(self._models, model_id)
+
+    async def list_models(self, run_id: str | None = None) -> list[JsonDict]:
+        with self._lock:
+            values = self._models.values()
+            if run_id is not None:
+                values = (value for value in values if value.get("run_id") == run_id)
+            return deepcopy(list(values))
+
+    async def create_webhook_endpoint(self, value: Mapping[str, Any]) -> JsonDict:
+        with self._lock:
+            return self._create_locked(
+                self._webhook_endpoints,
+                value,
+                id_field="webhook_endpoint_id",
+                kind="webhook_endpoint",
+                resource="webhook_endpoint",
+            )
+
+    async def get_webhook_endpoint(self, webhook_endpoint_id: str) -> JsonDict | None:
+        with self._lock:
+            return self._get_locked(self._webhook_endpoints, webhook_endpoint_id)
+
+    async def update_webhook_endpoint(
+        self, webhook_endpoint_id: str, updates: Mapping[str, Any]
+    ) -> JsonDict:
+        with self._lock:
+            return self._update_locked(
+                self._webhook_endpoints,
+                webhook_endpoint_id,
+                updates,
+                id_field="webhook_endpoint_id",
+                resource="webhook_endpoint",
+            )
+
+    async def list_webhook_endpoints(self, tenant_id: str | None = None) -> list[JsonDict]:
+        with self._lock:
+            values = self._webhook_endpoints.values()
+            if tenant_id is not None:
+                values = (value for value in values if value.get("tenant_id") == tenant_id)
+            return deepcopy(list(values))
+
+    async def create_webhook_delivery(
+        self, webhook_endpoint_id: str, value: Mapping[str, Any]
+    ) -> JsonDict:
+        with self._lock:
+            if webhook_endpoint_id not in self._webhook_endpoints:
+                raise ResourceNotFoundError("webhook_endpoint", webhook_endpoint_id)
+            self._webhook_deliveries.setdefault(webhook_endpoint_id, {})
+            return self._create_locked(
+                self._webhook_deliveries[webhook_endpoint_id],
+                value,
+                id_field="delivery_id",
+                kind="webhook_delivery",
+                resource="webhook_delivery",
+                fixed_fields={"webhook_endpoint_id": webhook_endpoint_id},
+            )
+
+    async def get_webhook_delivery(
+        self, webhook_endpoint_id: str, delivery_id: str
+    ) -> JsonDict | None:
+        with self._lock:
+            if webhook_endpoint_id not in self._webhook_endpoints:
+                raise ResourceNotFoundError("webhook_endpoint", webhook_endpoint_id)
+            return self._get_locked(
+                self._webhook_deliveries.setdefault(webhook_endpoint_id, {}), delivery_id
+            )
+
+    async def update_webhook_delivery(
+        self, webhook_endpoint_id: str, delivery_id: str, updates: Mapping[str, Any]
+    ) -> JsonDict:
+        with self._lock:
+            if webhook_endpoint_id not in self._webhook_endpoints:
+                raise ResourceNotFoundError("webhook_endpoint", webhook_endpoint_id)
+            supplied_endpoint_id = updates.get("webhook_endpoint_id", webhook_endpoint_id)
+            if supplied_endpoint_id != webhook_endpoint_id:
+                raise ValueError("webhook_delivery.webhook_endpoint_id cannot be changed")
+            return self._update_locked(
+                self._webhook_deliveries.setdefault(webhook_endpoint_id, {}),
+                delivery_id,
+                updates,
+                id_field="delivery_id",
+                resource="webhook_delivery",
+            )
+
+    async def list_webhook_deliveries(self, webhook_endpoint_id: str) -> list[JsonDict]:
+        with self._lock:
+            if webhook_endpoint_id not in self._webhook_endpoints:
+                raise ResourceNotFoundError("webhook_endpoint", webhook_endpoint_id)
+            return deepcopy(
+                list(self._webhook_deliveries.setdefault(webhook_endpoint_id, {}).values())
+            )
+
+    async def create_deletion(self, value: Mapping[str, Any]) -> JsonDict:
+        with self._lock:
+            return self._create_locked(
+                self._deletions,
+                value,
+                id_field="deletion_id",
+                kind="deletion",
+                resource="deletion",
+            )
+
+    async def get_deletion(self, deletion_id: str) -> JsonDict | None:
+        with self._lock:
+            return self._get_locked(self._deletions, deletion_id)
+
+    async def update_deletion(self, deletion_id: str, updates: Mapping[str, Any]) -> JsonDict:
+        with self._lock:
+            return self._update_locked(
+                self._deletions,
+                deletion_id,
+                updates,
+                id_field="deletion_id",
+                resource="deletion",
+            )
+
     # Idempotency reservation and exact response replay.
 
     async def begin_idempotent_request(
@@ -952,6 +1190,11 @@ class InMemoryStore:
             self._commands.clear()
             self._results.clear()
             self._artifacts.clear()
+            self._approvals.clear()
+            self._models.clear()
+            self._webhook_endpoints.clear()
+            self._webhook_deliveries.clear()
+            self._deletions.clear()
             self._idempotency.clear()
             self._event_conditions.clear()
             self._idempotency_conditions.clear()

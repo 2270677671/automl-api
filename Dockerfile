@@ -13,7 +13,7 @@ COPY pyproject.toml README.md LICENSE NOTICE CHANGELOG.md ./
 COPY apps/api/src ./apps/api/src
 COPY openapi ./openapi
 
-RUN python -m pip wheel --wheel-dir /wheels .
+RUN python -m pip wheel --wheel-dir /wheels '.[all-backends]'
 
 
 FROM ${PYTHON_BASE_IMAGE} AS runtime
@@ -32,7 +32,7 @@ RUN groupadd --gid 10001 automl \
     && install -d --owner automl --group automl --mode 0700 /var/lib/automl
 
 COPY --from=wheel-builder /wheels /wheels
-RUN python -m pip install --no-index --find-links /wheels managed-automl-skeleton \
+RUN python -m pip install --no-index --find-links /wheels 'managed-automl-skeleton[all-backends]' \
     && rm -rf /wheels
 
 USER 10001:10001
@@ -45,3 +45,15 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD python -c "import os, urllib.request; port=os.environ.get('AUTOML_PORT', '8000'); urllib.request.urlopen(f'http://127.0.0.1:{port}/readyz', timeout=3).read()" || exit 1
 
 ENTRYPOINT ["automl-api"]
+
+
+FROM runtime AS production
+
+ENV AUTOML_DEPLOYMENT_PROFILE=production
+
+RUN python -m automl_api.production
+
+
+FROM runtime AS default
+
+ENV AUTOML_DEPLOYMENT_PROFILE=partner-preview

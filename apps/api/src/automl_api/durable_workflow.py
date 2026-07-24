@@ -117,6 +117,7 @@ class DurableWorkflowService(WorkflowService):
                     "created_at": now,
                     "updated_at": now,
                     "links": self._run_links(run_id),
+                    "autonomy": request["autonomy"],
                     "objective": request["objective"],
                     "resolved_inputs": dict(request["objective"]),
                     "backend_id": backend["backend_id"],
@@ -893,6 +894,65 @@ class DurableWorkflowService(WorkflowService):
             report_artifact["artifact_id"], {"output_id": report_output["output_id"]}
         )
 
+        package_ref = self._artifact_ref(model_artifact)
+        pending_candidate = {
+            "model_id": model_id,
+            "run_id": run_id,
+            "status": "ELIGIBLE_CANDIDATE",
+            "signature": self._model_signature(run, result),
+            "model_card_output_id": model_card_output["output_id"],
+            "package_artifact_ref": package_ref,
+        }
+        if run.get("autonomy", {}).get("production_deploy") == "REQUIRE_APPROVAL" and exportable:
+            approval_id = self.store.new_id("approval")
+            approval = await self.store.create_approval(
+                run_id,
+                {
+                    "approval_id": approval_id,
+                    "tenant_id": run["tenant_id"],
+                    "run_revision": run["run_revision"],
+                    "evidence_version": 1,
+                    "kind": "PRODUCTION_DEPLOY",
+                    "status": "OPEN",
+                    "evidence_refs": [
+                        evaluation_output["output_id"],
+                        model_card_output["output_id"],
+                        report_output["output_id"],
+                    ],
+                    "decision_reason": None,
+                    "created_at": iso_now(),
+                    "expires_at": (utcnow() + timedelta(days=7)).isoformat().replace("+00:00", "Z"),
+                },
+            )
+            waiting = await self.store.update_run(
+                run_id,
+                {
+                    "phase": "PACKAGE",
+                    "status": "WAITING_APPROVAL",
+                    "outcome": None,
+                    "execution_step": "WAITING_APPROVAL",
+                    "progress": self._progress(
+                        95, "WAITING_APPROVAL", "Production deployment approval required"
+                    ),
+                    "blocking": {"decision_packet_ids": [], "approval_ids": [approval_id]},
+                    "available_actions": ["APPROVE", "REQUEST_CHANGES", "REJECT", "CANCEL"],
+                    "latest_output_refs": [self._output_ref(report_output)],
+                    "pending_model_candidate": pending_candidate,
+                    "updated_at": iso_now(),
+                },
+                expected_revision=run["run_revision"],
+                bump_revision=True,
+            )
+            await self._emit(
+                waiting,
+                "approval.requested.v1",
+                {
+                    "approval_id": approval["approval_id"],
+                    "href": f"/v1/runs/{run_id}/approvals",
+                },
+            )
+            return
+
         outputs = await self.store.list_outputs(run_id=run_id)
         await self.store.set_result(
             run_id,
@@ -952,6 +1012,33 @@ class DurableWorkflowService(WorkflowService):
             "run.completed.v1",
             {"outcome": "SUCCEEDED", "result_href": f"/v1/runs/{run_id}/result"},
         )
+
+    @staticmethod
+    def _model_signature(run: dict[str, Any], result: TabularAutoMLResult) -> dict[str, Any]:
+        target_column = str(run.get("resolved_inputs", {}).get("target_column", "target"))
+        columns = run.get("pre_split_profile", {}).get("columns", [])
+        inputs: list[dict[str, Any]] = []
+        output_type = "number"
+        for column in columns:
+            if not isinstance(column, dict) or column.get("name") == target_column:
+                if isinstance(column, dict) and column.get("name") == target_column:
+                    output_type = str(column.get("semantic_type") or "number")
+                continue
+            inputs.append(
+                {
+                    "name": str(column.get("name")),
+                    "data_type": str(column.get("semantic_type") or column.get("physical_dtype")),
+                    "required": int(column.get("missing_count") or 0) == 0,
+                }
+            )
+        if result.task["task_type"] == "BINARY_CLASSIFICATION":
+            outputs = [
+                {"name": "prediction", "data_type": output_type, "required": True},
+                {"name": "positive_class_probability", "data_type": "number", "required": True},
+            ]
+        else:
+            outputs = [{"name": "prediction", "data_type": "number", "required": True}]
+        return {"inputs": inputs, "outputs": outputs}
 
     async def _create_artifact(
         self,

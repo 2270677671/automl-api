@@ -181,7 +181,7 @@ def _copy_inputs(bundle: Path, api_wheel: Path, sdk_wheel: Path) -> None:
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
 
-    for source_name in ("apps/api/src", "openapi"):
+    for source_name in ("apps/api/src", "openapi", "deploy"):
         source = ROOT / source_name
         if not source.is_dir():
             raise ReleaseError(f"Required release input is missing: {source}")

@@ -36,6 +36,9 @@ jobs:
       - name: Verify generated Agent OpenAPI
         run: python scripts/generate_agent_openapi.py --check
 
+      - name: Verify production image dependencies
+        run: python -m automl_api.production
+
       - name: Run tests
         run: pytest -q
 

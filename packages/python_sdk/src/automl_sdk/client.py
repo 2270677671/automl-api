@@ -400,6 +400,38 @@ class AutoMLClient:
         response = self._request("GET", f"/v1/runs/{run_id}/stages", expected={200})
         return self._json_object(response)
 
+    def list_run_experiments(
+        self,
+        run_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int | None = None,
+    ) -> JSONDict:
+        """List experiment resources for a Run.
+
+        Version 0.7 exposes this as a compatibility collection and currently
+        returns an empty page.
+        """
+
+        params = {"cursor": cursor} if cursor is not None else _without_none({"limit": limit})
+        response = self._request(
+            "GET", f"/v1/runs/{run_id}/experiments", expected={200}, params=params
+        )
+        return self._json_object(response)
+
+    def get_run_experiment(self, run_id: str, experiment_id: str) -> JSONDict:
+        """Read one experiment resource when the service publishes one."""
+
+        response = self._request(
+            "GET",
+            f"/v1/runs/{run_id}/experiments/{experiment_id}",
+            expected={200},
+        )
+        return self._json_object(response)
+
+    list_experiments = list_run_experiments
+    get_experiment = get_run_experiment
+
     def get_run_events(
         self,
         run_id: str,
@@ -758,6 +790,196 @@ class AutoMLClient:
     pause = pause_run
     resume = resume_run
     cancel = cancel_run
+
+    # Production control plane ----------------------------------------
+    def list_approvals(
+        self,
+        run_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int | None = None,
+    ) -> JSONDict:
+        params = {"cursor": cursor} if cursor is not None else _without_none({"limit": limit})
+        response = self._request(
+            "GET", f"/v1/runs/{run_id}/approvals", expected={200}, params=params
+        )
+        return self._json_object(response)
+
+    def decide_approval(
+        self,
+        run_id: str,
+        approval_id: str,
+        *,
+        decision: str,
+        reason: str,
+        evidence_version: int | str,
+        idempotency_key: str | None = None,
+    ) -> JSONDict:
+        headers = self._idempotency_headers(idempotency_key)
+        headers["If-Match"] = _revision_etag(evidence_version)
+        evidence_version_number = _revision_int(evidence_version)
+        response = self._request(
+            "POST",
+            f"/v1/runs/{run_id}/approvals/{approval_id}:decide",
+            expected={202},
+            headers=headers,
+            json={
+                "decision": decision,
+                "reason": reason,
+                "evidence_version": evidence_version_number,
+            },
+        )
+        return self._json_object(response)
+
+    def get_model_candidate(self, model_id: str) -> JSONDict:
+        response = self._request("GET", f"/v1/models/{model_id}", expected={200})
+        return self._json_object(response)
+
+    get_model = get_model_candidate
+
+    def create_webhook_endpoint(
+        self,
+        *,
+        url: str,
+        event_types: Sequence[str],
+        description: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> JSONDict:
+        response = self._request(
+            "POST",
+            "/v1/webhook-endpoints",
+            expected={201},
+            headers=self._idempotency_headers(idempotency_key),
+            json=_without_none(
+                {
+                    "url": url,
+                    "event_types": list(event_types),
+                    "description": description,
+                }
+            ),
+        )
+        return self._json_object(response)
+
+    def list_webhook_endpoints(
+        self,
+        *,
+        cursor: str | None = None,
+        limit: int | None = None,
+    ) -> JSONDict:
+        params = {"cursor": cursor} if cursor is not None else _without_none({"limit": limit})
+        response = self._request("GET", "/v1/webhook-endpoints", expected={200}, params=params)
+        return self._json_object(response)
+
+    def get_webhook_endpoint(self, webhook_endpoint_id: str) -> JSONDict:
+        response = self._request(
+            "GET", f"/v1/webhook-endpoints/{webhook_endpoint_id}", expected={200}
+        )
+        return self._json_object(response)
+
+    def delete_webhook_endpoint(
+        self,
+        webhook_endpoint_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> None:
+        self._request(
+            "DELETE",
+            f"/v1/webhook-endpoints/{webhook_endpoint_id}",
+            expected={204},
+            headers=self._idempotency_headers(idempotency_key),
+        )
+
+    def rotate_webhook_endpoint_secret(
+        self,
+        webhook_endpoint_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> JSONDict:
+        response = self._request(
+            "POST",
+            f"/v1/webhook-endpoints/{webhook_endpoint_id}:rotate-secret",
+            expected={201},
+            headers=self._idempotency_headers(idempotency_key),
+        )
+        return self._json_object(response)
+
+    def enable_webhook_endpoint(
+        self,
+        webhook_endpoint_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> JSONDict:
+        response = self._request(
+            "POST",
+            f"/v1/webhook-endpoints/{webhook_endpoint_id}:enable",
+            expected={200},
+            headers=self._idempotency_headers(idempotency_key),
+        )
+        return self._json_object(response)
+
+    def list_webhook_deliveries(
+        self,
+        webhook_endpoint_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int | None = None,
+        statuses: Sequence[str] | None = None,
+    ) -> JSONDict:
+        params = (
+            {"cursor": cursor}
+            if cursor is not None
+            else _without_none({"limit": limit, "status": _csv(statuses)})
+        )
+        response = self._request(
+            "GET",
+            f"/v1/webhook-endpoints/{webhook_endpoint_id}/deliveries",
+            expected={200},
+            params=params,
+        )
+        return self._json_object(response)
+
+    def get_webhook_delivery(self, webhook_endpoint_id: str, delivery_id: str) -> JSONDict:
+        response = self._request(
+            "GET",
+            f"/v1/webhook-endpoints/{webhook_endpoint_id}/deliveries/{delivery_id}",
+            expected={200},
+        )
+        return self._json_object(response)
+
+    def redeliver_webhook_delivery(
+        self,
+        webhook_endpoint_id: str,
+        delivery_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> JSONDict:
+        response = self._request(
+            "POST",
+            f"/v1/webhook-endpoints/{webhook_endpoint_id}/deliveries/{delivery_id}:redeliver",
+            expected={202},
+            headers=self._idempotency_headers(idempotency_key),
+        )
+        return self._json_object(response)
+
+    def delete_dataset(
+        self,
+        dataset_id: str,
+        *,
+        idempotency_key: str | None = None,
+    ) -> JSONDict:
+        response = self._request(
+            "DELETE",
+            f"/v1/datasets/{dataset_id}",
+            expected={202},
+            headers=self._idempotency_headers(idempotency_key),
+        )
+        return self._json_object(response)
+
+    def get_deletion_job(self, deletion_id: str) -> JSONDict:
+        response = self._request("GET", f"/v1/deletions/{deletion_id}", expected={200})
+        return self._json_object(response)
+
+    get_deletion = get_deletion_job
 
     # Commands and terminal results ------------------------------------
     def get_command(self, command_id: str) -> JSONDict:
@@ -1475,6 +1697,10 @@ def _revision_etag(revision: int | str) -> str:
     if _REVISION_ETAG.fullmatch(value):
         return value
     raise ValueError('revision must be a positive integer or quoted ETag such as "3"')
+
+
+def _revision_int(revision: int | str) -> int:
+    return int(_revision_etag(revision).strip('"'))
 
 
 def _without_none(values: Mapping[str, Any]) -> JSONDict:
