@@ -140,7 +140,9 @@ class AutoGluonBackend:
     @property
     def descriptor(self) -> BackendDescriptor:
         version = _installed_version()
-        importable = importlib.util.find_spec("autogluon.tabular") is not None
+        importable = importlib.util.find_spec("autogluon") is not None and (
+            importlib.util.find_spec("autogluon.tabular") is not None
+        )
         available = version is not None and importable
         return BackendDescriptor(
             backend_id="autogluon",

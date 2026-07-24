@@ -11,7 +11,7 @@
 | 测试目的 | 判断当前 API 是否达到“可由外部 Agent 平台以 HTTP/SDK 方式调用”的交付状态，并明确尚未覆盖或不宜承诺的边界 |
 | 测试范围 | API 契约、SDK、上传/运行/中断/恢复/结果/artifact、标准后端、认证、生产预检、Webhook outbox、审批、模型候选、删除任务、限额、Docker、release bundle |
 | 不在范围 | 生产级 HA、真实 PostgreSQL/RLS 运行验证、真实 IdP 联调、Webhook HTTP dispatcher、在线推理服务、分布式物理删除、自动生产部署、TabPFN 真实权重商业许可审查 |
-| 本轮验证状态 | 最新工作树的 120 项 Python 测试、静态检查、OpenAPI、生产依赖检查、wheel 构建和 release bundle 校验已通过；Docker 全量构建与容器 smoke 未完成，本报告不复用旧镜像作为证据 |
+| 本轮验证状态 | 最新工作树的 121 项 Python 测试、静态检查、OpenAPI、生产依赖检查、wheel 构建和 release bundle 校验已通过；Docker 全量构建与容器 smoke 未完成，本报告不复用旧镜像作为证据 |
 
 ## 2. 总体验收结论
 
@@ -35,13 +35,13 @@ dispatcher、可观测性和备份灾备。
 | 默认执行后端 | `sklearn` |
 | 标准后端依赖 | `scikit-learn>=1.5,<2`、`autogluon.tabular>=1.5,<1.6`、`tabpfn>=8.1,<8.2` |
 | Docker 全量构建 | 未完成；全量后端镜像下载大型 Torch/CUDA 依赖时主动终止，未形成通过结论 |
-| Release bundle | `dist/releases/managed-automl-0.7.0-20260724-verified`；目录内 `SHA256SUMS` 全部通过 |
+| Release bundle | `dist/releases/managed-automl-0.7.0-20260724-verified-r2`；目录内 `SHA256SUMS` 全部通过 |
 
 ## 4. 测试矩阵
 
 | 编号 | 对象 | 测试动作 | 预期 | 实际 | 结论 | 证据 |
 | --- | --- | --- | --- | --- | --- | --- |
-| T-001 | 全量 Python 测试 | 执行 `pytest --override-ini addopts= -q` | 所有单元、契约、SDK、持久化、后端和端到端测试通过 | `120 passed in 8.83s` | 通过 | 最新工作树 pytest 输出 |
+| T-001 | 全量 Python 测试 | 执行 `pytest --override-ini addopts= -q` | 所有单元、契约、SDK、持久化、后端和端到端测试通过 | `121 passed in 8.45s` | 通过 | 最新工作树 pytest 输出 |
 | T-002 | 代码静态检查 | 执行 `ruff check .` | 无 lint 问题 | 通过 | 通过 | ruff 输出 |
 | T-003 | 代码格式检查 | 执行 `ruff format --check .` | 所有文件格式符合配置 | 通过 | 通过 | ruff 输出 |
 | T-004 | Agent OpenAPI 生成一致性 | 执行 `python scripts/generate_agent_openapi.py --check` | 生成合同与 `openapi/automl-agent-tools.yaml` 一致 | 通过 | 通过 | 脚本输出 |
@@ -71,7 +71,7 @@ dispatcher、可观测性和备份灾备。
 | T-028 | Docker 国内源全量构建 | 使用默认 Dockerfile build args 构建最新工作树镜像 | 使用 DaoCloud Python base 和清华 PyPI 源，完整依赖安装和镜像构建成功 | 构建确认使用国内源，但下载大型 Torch/CUDA 依赖时主动终止，未生成最终镜像 | 未完成 | 本轮 Docker 构建记录 |
 | T-029 | Docker health/readiness | 容器启动后访问 `/healthz`、`/readyz`、manifest | partner-preview 探针正常；formal `/readyz` 固定返回 `503 production_preflight_failed` | 因 T-028 未生成最新镜像，未执行本轮容器 smoke；formal 行为已有 HTTP 自动化覆盖 | 未完成 | `tests/test_production_controls.py` |
 | T-030 | Wheel 构建 | 构建 API wheel 与 SDK wheel | 两个 wheel 成功生成，版本为 0.7.0 | API 与 SDK wheel 均成功构建 | 通过 | `python scripts/package_release.py --no-archive` 输出 |
-| T-031 | Release bundle | 执行 `python scripts/package_release.py --skip-build --no-archive` | bundle 含 wheels、OpenAPI、Compose、Dockerfile、文档和 SHA256SUMS | `dist/releases/managed-automl-0.7.0-20260724-verified` 已生成 | 通过 | 本轮 release bundle |
+| T-031 | Release bundle | 执行 `python scripts/package_release.py --no-archive` | bundle 含 wheels、OpenAPI、Compose、Dockerfile、文档和 SHA256SUMS | `dist/releases/managed-automl-0.7.0-20260724-verified-r2` 已生成 | 通过 | 本轮 release bundle |
 | T-032 | Release bundle 校验 | 对本轮 release 目录执行 `shasum -a 256 -c SHA256SUMS` | 所有条目校验通过 | 所有条目 `OK` | 通过 | 本轮 SHA256SUMS 校验输出 |
 | T-033 | 生产依赖与 fail-closed | 执行镜像依赖检查并验证 formal `/readyz` | 依赖检查只反映客户端包存在；0.7.0 formal profile 因 `runtime_adapters=false` 返回 `503` | 客户端依赖检查通过；formal HTTP 测试返回 `503 production_preflight_failed` | 通过 | `python -m automl_api.production`、`tests/test_production_controls.py` |
 | T-034 | Webhook outbox 与删除任务 | 创建 endpoint、生成 outbox、请求重投、删除数据集并查询 deletion job | API 返回可跟踪资源；local durable 同步撤销访问并物理删除 dataset/upload 和派生 artifact 字节 | 自动化覆盖通过，删除后旧 artifact ticket 返回 `404` | 通过 | `tests/test_production_controls.py` |

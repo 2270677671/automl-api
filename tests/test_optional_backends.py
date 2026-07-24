@@ -69,6 +69,24 @@ def test_autogluon_unavailable_error_does_not_import_framework(
     assert error.value.context["backend_id"] == "autogluon"
 
 
+def test_autogluon_descriptor_handles_missing_parent_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(autogluon_module, "_installed_version", lambda: None)
+
+    def missing_parent(name: str):
+        if name == "autogluon":
+            return None
+        raise ModuleNotFoundError(name)
+
+    monkeypatch.setattr(autogluon_module.importlib.util, "find_spec", missing_parent)
+
+    descriptor = AutoGluonBackend().descriptor
+
+    assert descriptor.available is False
+    assert descriptor.unavailable_reason == "STANDARD_DEPENDENCY_NOT_INSTALLED"
+
+
 @pytest.mark.skipif(
     AutoGluonBackend().descriptor.available is False,
     reason="AutoGluon is not installed in this test environment",
