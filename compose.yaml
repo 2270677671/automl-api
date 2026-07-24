@@ -10,7 +10,7 @@ services:
     init: true
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${AUTOML_BIND_PORT:-8000}:8000"
+      - "${AUTOML_BIND_ADDRESS:-127.0.0.1}:${AUTOML_BIND_PORT:-8000}:8000"
     environment:
       AUTOML_AUTH_MODE: "${AUTOML_AUTH_MODE:?set AUTOML_AUTH_MODE=production in .env}"
       AUTOML_AUTOGLUON_TIME_LIMIT_SECONDS: "${AUTOML_AUTOGLUON_TIME_LIMIT_SECONDS:-20}"

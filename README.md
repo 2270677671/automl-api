@@ -75,6 +75,8 @@ docker build \
 For Compose, set `AUTOML_PYTHON_BASE_IMAGE`, `AUTOML_PIP_INDEX_URL`, and (when loading or
 publishing a differently named image) `AUTOML_IMAGE` in `.env`. `AUTOML_IMAGE` also accepts a
 registry reference pinned by digest, for example `registry.example.com/automl/api@sha256:...`.
+`AUTOML_BIND_ADDRESS` defaults to `127.0.0.1`; set it to a specific private interface address only
+when callers on that trusted network must reach the API.
 
 ## Build a partner delivery bundle
 
