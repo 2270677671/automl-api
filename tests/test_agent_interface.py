@@ -52,6 +52,8 @@ def test_agent_manifest_declares_an_external_planner_without_an_internal_llm(
         "BINARY_CLASSIFICATION",
         "REGRESSION",
     ]
+    tabpfn_attributions = backends["tabpfn"]["capabilities"]["required_attributions"]
+    assert tabpfn_attributions == ["Built with PriorLabs-TabPFN"]
     assert backends["sklearn"]["artifact"]["serialization"] == "joblib"
     assert "internal_llm_planning" in body["unsupported_capabilities"]
     assert body["runtime_limits"]["max_trials_per_run"] >= 2

@@ -52,6 +52,7 @@ class BackendCapabilities:
     supports_gpu: bool = False
     limits: dict[str, int] = field(default_factory=dict)
     runtime_requirements: tuple[str, ...] = ()
+    required_attributions: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -66,6 +67,7 @@ class BackendCapabilities:
             "supports_gpu": self.supports_gpu,
             "limits": dict(self.limits),
             "runtime_requirements": list(self.runtime_requirements),
+            "required_attributions": list(self.required_attributions),
         }
 
 

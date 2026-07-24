@@ -548,6 +548,7 @@ class BackendCapabilities(PublicModel):
     supports_gpu: bool
     limits: dict[str, int] = Field(default_factory=dict)
     runtime_requirements: list[str] = Field(default_factory=list)
+    required_attributions: list[str] = Field(default_factory=list)
 
 
 class BackendArtifactContract(PublicModel):

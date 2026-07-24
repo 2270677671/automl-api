@@ -1419,6 +1419,7 @@ components:
         - supports_gpu
         - limits
         - runtime_requirements
+        - required_attributions
       properties:
         task_types:
           type: array
@@ -1444,6 +1445,11 @@ components:
           uniqueItems: true
           items: {type: string}
           description: 选择该后端前调用方应满足或展示的运行条件。
+        required_attributions:
+          type: array
+          uniqueItems: true
+          items: {type: string}
+          description: 平台对外展示该后端能力或结果时必须原样展示的归属文本。
 
     BackendArtifactContract:
       type: object

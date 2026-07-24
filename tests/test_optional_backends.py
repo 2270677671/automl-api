@@ -278,5 +278,9 @@ def test_tabpfn_public_v2_requires_both_task_checkpoints(
     regressor.write_bytes(b"regressor")
     ready = TabPFNBackend().descriptor
     assert ready.available is True
+    assert ready.capabilities.required_attributions == ("Built with PriorLabs-TabPFN",)
+    assert ready.as_dict()["capabilities"]["required_attributions"] == [
+        "Built with PriorLabs-TabPFN"
+    ]
     assert _model_path_for_task("BINARY_CLASSIFICATION", "public-v2") == str(classifier)
     assert _model_path_for_task("REGRESSION", "public-v2") == str(regressor)

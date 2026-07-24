@@ -485,15 +485,19 @@ curl -sS "$AUTOML_API/v1/agent/manifest" \
 ### 9.3 TabPFN readiness 与运行
 
 适用场景：小数据 tabular 评估。TabPFN 当前需要 operator 明确接受模型权重许可，并提供
-`TABPFN_TOKEN` 或 `AUTOML_TABPFN_MODEL_PATH`。即使训练运行成功，当前 API 也只返回 data-free
-evaluation metadata，不导出可加载 fit-state。
+已预取的 public-v2 分类/回归 checkpoint、`TABPFN_TOKEN` 或已配置的本地 checkpoint。即使
+训练运行成功，当前 API 也只返回 data-free evaluation metadata，不导出可加载 fit-state。
+平台对外展示 TabPFN 能力、选项或结果时，必须原样展示 manifest 的
+`capabilities.required_attributions[]`；当前值为 `Built with PriorLabs-TabPFN`。
 
 Docker/Compose 环境变量示例：
 
 ```bash
 export AUTOML_TABPFN_LICENSE_ACCEPTED=true
+export AUTOML_TABPFN_MODEL_SOURCE=public-v2
+# 或使用凭据模型源：
 export TABPFN_TOKEN=prior-labs-token
-# 或离线 checkpoint：
+# 或已批准的本地 checkpoint：
 export AUTOML_TABPFN_MODEL_PATH=/var/lib/automl/tabpfn-cache/checkpoint.ckpt
 ```
 
@@ -508,6 +512,7 @@ with AutoMLClient("http://127.0.0.1:8000", token="local-development-token") as a
         if backend["backend_id"] == "tabpfn"
     )
     print(tabpfn["installed"], tabpfn["available"], tabpfn["unavailable_reason"])
+    print(tabpfn["capabilities"]["required_attributions"])
 ```
 
 当 `available=true` 时提交小数据运行：

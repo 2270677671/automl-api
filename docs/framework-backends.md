@@ -44,6 +44,10 @@ AutoGluon 1.5 is Apache-2.0 and supports Python `>=3.10,<3.14`. See the
 
 **Built with PriorLabs-TabPFN.**
 
+The manifest publishes the exact machine-readable attribution in
+`backends[].capabilities.required_attributions`. An external Agent platform must render every
+entry unchanged whenever it exposes the TabPFN capability, selection, or result to users.
+
 The backend reports `available=true` only when all of these are true:
 
 1. the `tabpfn` package is importable;

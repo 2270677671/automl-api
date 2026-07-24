@@ -307,6 +307,7 @@ class TabPFNBackend:
                     "GPU recommended; CPU execution is limited to small datasets",
                     "Wall-time deadline is cooperative between folds, not a hard fit interruption",
                 ),
+                required_attributions=("Built with PriorLabs-TabPFN",),
             ),
             artifact_kind="TABPFN_EVALUATION_METADATA",
             artifact_media_type="application/json",

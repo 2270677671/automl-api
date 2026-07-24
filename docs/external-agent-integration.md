@@ -63,6 +63,7 @@ Agent 平台执行动作时，必须调用 OpenAPI 中已有的 `answerDecisionP
 - `capabilities.task_types` 和 `capabilities.media_types` 与本次数据和任务匹配；
 - CPU/GPU、概率预测、交叉验证和 sealed holdout 等 capability 标志；
 - `capabilities.limits` 与 `capabilities.runtime_requirements` 中声明的框架规模上限和运行条件；
+- `capabilities.required_attributions` 中必须由平台展示的原样归属文本；
 - `artifact.kind`、`artifact.media_type` 和 `artifact.serialization`，用于安全加载与后续处理；
 - `deterministic` 和 `production_eligible`，二者不能由 `available` 推导。
 
@@ -85,6 +86,10 @@ Agent 平台执行动作时，必须调用 OpenAPI 中已有的 `answerDecisionP
 当前所有后端仍受单表 CSV/Parquet、二分类/回归和离线评估边界约束。选择 AutoGluon 或 TabPFN
 不会启用在线推理、生产部署、多分类、时间序列或无限搜索。TabPFN 当前只返回不含训练数据的
 evaluation metadata，并明确 `exportable=false`，不返回原生 fit-state 模型。
+
+只要平台对外展示 TabPFN 能力、提供 TabPFN 选项或返回 TabPFN 结果，就必须按
+`capabilities.required_attributions` 原样展示 `Built with PriorLabs-TabPFN`。平台不应翻译、
+缩写或用自有产品名替换该文本。
 
 ## Run 策略
 

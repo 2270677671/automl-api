@@ -135,11 +135,17 @@ curl -sS "$AUTOML_API/v1/agent/manifest" \
       "backend_id": "tabpfn",
       "installed": true,
       "available": false,
-      "unavailable_reason": "MODEL_LICENSE_NOT_ACCEPTED"
+      "unavailable_reason": "MODEL_LICENSE_NOT_ACCEPTED",
+      "capabilities": {
+        "required_attributions": ["Built with PriorLabs-TabPFN"]
+      }
     }
   ]
 }
 ```
+
+外部 Agent 平台对外展示后端能力、选项或结果时，必须原样展示该后端
+`capabilities.required_attributions[]` 中的每条文本。
 
 ### 4.6 POST `/v1/datasets`
 
