@@ -63,12 +63,17 @@ production authentication boundary.
 
 Docker builds default to domestic sources for the Python base image and pip downloads:
 `docker.m.daocloud.io/library/python:3.12-slim` and
-`https://pypi.tuna.tsinghua.edu.cn/simple`. Override them when needed:
+`https://pypi.tuna.tsinghua.edu.cn/simple`. The full three-backend image pins the CPU-only PyTorch
+wheel from `https://download.pytorch.org/whl/cpu`, avoiding unused CUDA layers; a GPU image requires
+a separately reviewed Torch index/version and NVIDIA Container Toolkit configuration. Override the
+build sources when needed:
 
 ```bash
 docker build \
   --build-arg PYTHON_BASE_IMAGE=python:3.12-slim \
   --build-arg PIP_INDEX_URL=https://pypi.org/simple \
+  --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu \
+  --build-arg TORCH_VERSION=2.13.0+cpu \
   -t managed-automl-api:0.7.0 .
 ```
 

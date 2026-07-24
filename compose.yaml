@@ -6,6 +6,8 @@ services:
       args:
         PIP_INDEX_URL: "${AUTOML_PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
         PYTHON_BASE_IMAGE: "${AUTOML_PYTHON_BASE_IMAGE:-docker.m.daocloud.io/library/python:3.12-slim}"
+        TORCH_INDEX_URL: "${AUTOML_TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}"
+        TORCH_VERSION: "${AUTOML_TORCH_VERSION:-2.13.0+cpu}"
     image: "${AUTOML_IMAGE:-managed-automl-api:0.7.0}"
     init: true
     restart: unless-stopped

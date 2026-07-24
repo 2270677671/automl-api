@@ -13,8 +13,10 @@ development-set model selection, native preprocessing, prediction adapter, and a
 The service wheel always ships all three adapters, while framework packages are installed by
 profile. The base install includes scikit-learn; `.[autogluon]`, `.[tabpfn]`, or
 `.[all-backends]` add the heavier runtimes. The normal Docker build installs `all-backends`, so its
-manifest can expose all three when their separate runtime gates pass. Installation alone does not
-make TabPFN ready: model-weight access and license gates are checked separately at runtime.
+manifest can expose all three when their separate runtime gates pass. The default image uses a
+CPU-only PyTorch wheel; GPU execution requires a separately configured image and NVIDIA runtime.
+Installation alone does not make TabPFN ready: model-weight access and license gates are checked
+separately at runtime.
 
 ## AutoGluon
 
