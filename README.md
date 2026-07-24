@@ -72,7 +72,7 @@ build sources when needed:
 docker build \
   --build-arg PYTHON_BASE_IMAGE=python:3.12-slim \
   --build-arg PIP_INDEX_URL=https://pypi.org/simple \
-  --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu \
+  --build-arg TORCH_FIND_LINKS=https://download.pytorch.org/whl/cpu/torch/ \
   --build-arg TORCH_VERSION=2.13.0+cpu \
   -t managed-automl-api:0.7.0 .
 ```

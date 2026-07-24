@@ -1,13 +1,15 @@
 ARG PYTHON_BASE_IMAGE=docker.m.daocloud.io/library/python:3.12-slim
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
-ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+ARG TORCH_FIND_LINKS=https://download.pytorch.org/whl/cpu/torch/
 ARG TORCH_VERSION=2.13.0+cpu
+ARG PIP_TRUSTED_HOST=
 
 FROM ${PYTHON_BASE_IMAGE} AS wheel-builder
 
 ARG PIP_INDEX_URL
-ARG TORCH_INDEX_URL
+ARG TORCH_FIND_LINKS
 ARG TORCH_VERSION
+ARG PIP_TRUSTED_HOST
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_INDEX_URL=${PIP_INDEX_URL} \
     PIP_NO_CACHE_DIR=1
@@ -18,7 +20,8 @@ COPY apps/api/src ./apps/api/src
 COPY openapi ./openapi
 
 RUN python -m pip wheel --wheel-dir /wheels \
-    --extra-index-url "${TORCH_INDEX_URL}" \
+    --find-links "${TORCH_FIND_LINKS}" \
+    ${PIP_TRUSTED_HOST:+--trusted-host "${PIP_TRUSTED_HOST}"} \
     "torch==${TORCH_VERSION}" \
     '.[all-backends]'
 
