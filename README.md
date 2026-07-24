@@ -83,6 +83,26 @@ registry reference pinned by digest, for example `registry.example.com/automl/ap
 `AUTOML_BIND_ADDRESS` defaults to `127.0.0.1`; set it to a specific private interface address only
 when callers on that trusted network must reach the API.
 
+For an NVIDIA deployment, install NVIDIA Container Toolkit on the Docker host, then apply the GPU
+Compose override. The GPU image pins the CUDA 13.0 Torch wheel separately from the portable CPU
+image:
+
+```bash
+cp .env.gpu.example .env.gpu
+docker compose --env-file .env --env-file .env.gpu \
+  -f compose.yaml -f compose.gpu.yaml build automl-api
+docker compose --env-file .env --env-file .env.gpu \
+  -f compose.yaml -f compose.gpu.yaml up -d --no-build
+docker compose --env-file .env --env-file .env.gpu \
+  -f compose.yaml -f compose.gpu.yaml exec automl-api \
+  python -c 'import torch; print(torch.__version__, torch.cuda.is_available())'
+```
+
+Do not set `AUTOML_TABPFN_LICENSE_ACCEPTED=true` until the organization responsible for the
+deployment has accepted the applicable model-weight license. TabPFN also requires either a
+process-local `TABPFN_TOKEN` for approved first-use download or an approved checkpoint mounted in
+the persistent state volume and selected with `AUTOML_TABPFN_MODEL_PATH`.
+
 ## Build a partner delivery bundle
 
 Generate a version-checked bundle containing both wheels, the canonical and active Agent OpenAPI

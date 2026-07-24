@@ -55,6 +55,24 @@ set `AUTOML_TABPFN_MODEL_PATH`.
 The Compose profile sets `TABPFN_MODEL_CACHE_DIR=/var/lib/automl/tabpfn-cache`, which is on the
 persistent state volume instead of the container's read-only filesystem.
 
+The package license and model-weight access are separate concerns. Setting
+`AUTOML_TABPFN_LICENSE_ACCEPTED=true` is an operator attestation; the API never accepts legal terms
+on the operator's behalf. Model access must then be supplied through `TABPFN_TOKEN` or an approved
+local checkpoint. A missing attestation reports `MODEL_LICENSE_NOT_ACCEPTED`; an accepted license
+without either model source reports `MODEL_ACCESS_NOT_CONFIGURED`.
+
+GPU execution additionally requires all three layers to be ready: an NVIDIA driver on the host,
+NVIDIA Container Toolkit configured for Docker, and the CUDA Torch image selected through
+`compose.gpu.yaml`. A physical GPU and a working host `nvidia-smi` are not sufficient by themselves.
+Validate the boundary before enabling TabPFN:
+
+```bash
+docker run --rm --gpus all nvidia/cuda:13.0.0-base-ubuntu24.04 nvidia-smi
+docker compose --env-file .env --env-file .env.gpu \
+  -f compose.yaml -f compose.gpu.yaml exec automl-api \
+  python -c 'import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())'
+```
+
 TabPFN's native `save_fit_state` contains the development feature matrix, labels, preprocessing
 state, and categorical vocabulary. That conflicts with this API's artifact data boundary. The
 backend therefore performs real training and evaluation but returns only a small metadata JSON with

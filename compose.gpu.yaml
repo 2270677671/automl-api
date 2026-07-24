@@ -1,0 +1,12 @@
+services:
+  automl-api:
+    build:
+      args:
+        TORCH_FIND_LINKS: "${AUTOML_GPU_TORCH_FIND_LINKS:-https://download.pytorch.org/whl/cu130/torch/}"
+        TORCH_VERSION: "${AUTOML_GPU_TORCH_VERSION:-2.13.0+cu130}"
+    image: "${AUTOML_GPU_IMAGE:-managed-automl-api:0.7.0-cuda}"
+    environment:
+      AUTOML_TABPFN_DEVICE: "${AUTOML_TABPFN_DEVICE:-cuda}"
+      NVIDIA_DRIVER_CAPABILITIES: "${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}"
+      NVIDIA_VISIBLE_DEVICES: "${NVIDIA_VISIBLE_DEVICES:-all}"
+    gpus: all

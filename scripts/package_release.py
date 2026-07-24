@@ -94,6 +94,9 @@ def _verify_versions(version: str) -> None:
             f'User-Agent": "automl-python-sdk/{version}"',
         ],
         ROOT / "compose.yaml": [f"AUTOML_IMAGE:-managed-automl-api:{version}"],
+        ROOT / "compose.gpu.yaml": [
+            f"AUTOML_GPU_IMAGE:-managed-automl-api:{version}-cuda"
+        ],
         ROOT / "openapi" / "automl-api.yaml": [f"  version: {version}"],
         ROOT / "openapi" / "automl-agent-tools.yaml": [f"  version: {version}"],
         ROOT / "CHANGELOG.md": [f"## {version} - "],
@@ -161,8 +164,10 @@ def _copy_inputs(bundle: Path, api_wheel: Path, sdk_wheel: Path) -> None:
         "pyproject.toml": "pyproject.toml",
         "Dockerfile": "Dockerfile",
         "compose.yaml": "compose.yaml",
+        "compose.gpu.yaml": "compose.gpu.yaml",
         ".dockerignore": ".dockerignore",
         ".env.example": ".env.example",
+        ".env.gpu.example": ".env.gpu.example",
         ".env.production.example": ".env.production.example",
         ".github/workflows/ci.yml": ".github/workflows/ci.yml",
         "docs/external-agent-integration.md": "docs/external-agent-integration.md",
