@@ -67,6 +67,9 @@ def _sqlite_backup(source: Path, destination: Path) -> None:
     destination_connection = sqlite3.connect(destination)
     try:
         source_connection.backup(destination_connection)
+        journal_mode = destination_connection.execute("PRAGMA journal_mode=DELETE").fetchone()
+        if journal_mode is None or str(journal_mode[0]).lower() != "delete":
+            raise BackupError("the copied SQLite database could not disable WAL journaling")
         result = destination_connection.execute("PRAGMA quick_check").fetchone()
         if result is None or str(result[0]) != "ok":
             raise BackupError("the copied SQLite database failed quick_check")
@@ -76,9 +79,24 @@ def _sqlite_backup(source: Path, destination: Path) -> None:
     destination.chmod(0o600)
 
 
+def _immutable_sqlite_connection(path: Path) -> sqlite3.Connection:
+    uri = f"{path.resolve().as_uri()}?mode=ro&immutable=1"
+    return sqlite3.connect(uri, uri=True)
+
+
+def _remove_sqlite_sidecars(path: Path) -> None:
+    for suffix in ("-journal", "-shm", "-wal"):
+        Path(f"{path}{suffix}").unlink(missing_ok=True)
+
+
+def _discard_sqlite_snapshot(path: Path) -> None:
+    path.unlink(missing_ok=True)
+    _remove_sqlite_sidecars(path)
+
+
 def _database_content_hash(path: Path) -> str:
     digest = hashlib.sha256()
-    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    connection = _immutable_sqlite_connection(path)
     try:
         for statement in connection.iterdump():
             digest.update(statement.encode("utf-8"))
@@ -144,7 +162,7 @@ def verify_backup(backup_dir: str | Path) -> dict[str, Any]:
     database = root / "automl.db"
     if not database.is_file():
         raise BackupError("backup does not contain automl.db")
-    connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+    connection = _immutable_sqlite_connection(database)
     try:
         result = connection.execute("PRAGMA quick_check").fetchone()
     finally:
@@ -210,10 +228,11 @@ def create_backup(
                 _copy_tree(objects, copied_objects)
             _sqlite_backup(state / "automl.db", database)
             if _database_content_hash(before) == _database_content_hash(database):
-                before.unlink()
+                _discard_sqlite_snapshot(before)
+                _remove_sqlite_sidecars(database)
                 break
-            before.unlink(missing_ok=True)
-            database.unlink(missing_ok=True)
+            _discard_sqlite_snapshot(before)
+            _discard_sqlite_snapshot(database)
             shutil.rmtree(copied_objects, ignore_errors=True)
             if attempt == 2:
                 raise BackupError(

@@ -127,6 +127,24 @@ Agent 平台必须将这些字段放入受限 data/tool-result 通道，不得�
 developer 指令。模型输出必须在平台侧通过 Schema、权限、策略和当前 action descriptor 校验后，
 才能调用 canonical 写端点。
 
+## Agent 平台必须执行的 DLP
+
+本 API 只负责 AutoML 资源和运行边界，无法观察第三方平台最终构造的 Prompt，也不替第三方平台
+决定哪些数据可以发送给外部 LLM。接入方必须在自己的 tool executor 中完成以下四道门禁：
+
+1. 上传前入站 DLP：在调用 `createDatasetUpload` 或 PUT 上传字节前完成数据分级、PII/密钥检测、
+   租户授权和保留期检查；按策略拒绝、删除、哈希化或标记敏感列。禁止先上传再把扫描当作补救。
+2. API 结果出站 DLP：把 `agent-context`、DecisionPacket、Output 摘要、文件名、列名和类别值送入
+   LLM 前执行字段 allowlist、opaque ID 映射、PII 检测和长度限制。artifact 默认不得进入 Prompt。
+3. LLM 到 API 的工具输入校验：LLM 输出只能按当前 action descriptor 和 JSON Schema 解析，重新检查
+   tenant、operation scope、资源 ID、`If-Match` 和策略；数据派生文本中的指令不得提升为控制指令。
+4. 日志与记忆 DLP：Prompt、tool result、trace、会话记忆和错误采样必须执行同一脱敏策略，且不得记录
+   Bearer、下载票据、原始数据行、云凭据或 TabPFN token。
+
+`policy.allow_pii=false` 是调用方的策略声明，不是扫描结果；`policy.allow_external_llm=true` 是允许读取
+受限 Agent context 的授权，也不是出站 DLP 证明。在上述门禁由接入方实现并共同验收前，平台必须将
+manifest 的 `production_external_llm_safe=false` 视为硬边界，不得向客户宣称数据可直接发送给外部 LLM。
+
 ## 凭据边界
 
 - Bearer token、API key、对象存储票据和云凭据只能保存在 Agent 平台的 tool executor。
@@ -181,7 +199,7 @@ developer 指令。模型输出必须在平台侧通过 Schema、权限、策略
 ## 生产前门禁
 
 1. 从 preview HS256 JWT verifier 升级到正式 OIDC/JWKS 或 workload identity。
-2. Agent context 出站 DLP、opaque column ID、字段 allowlist 和租户同意审计。
+2. 上传前入站 DLP，以及 Agent context 出站 DLP、opaque column ID、字段 allowlist 和租户同意审计。
 3. Prompt-injection 回归集，覆盖文件名、列名、类别值、问题文本和 artifact 摘要。
 4. 平台侧结构化输出校验、操作 allowlist、预算限制、审计和 kill switch。
 5. API 侧 PostgreSQL/RLS、资源隔离、可观测性、Webhook、备份和灾备。

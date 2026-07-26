@@ -302,6 +302,12 @@ DecisionPacket 选项、列名和问题文本仍可能含数据派生内容；�
 `contains_raw_dataset_rows=false`、`may_include_dataset_derived_values=true` 和
 `dataset_derived_text_trust=UNTRUSTED` 明示这一边界。当前本地 profile 没有生产 DLP。
 
+第三方 Agent 平台必须在上传前扫描或脱敏 CSV/Parquet，在任何 API 结果进入 Prompt 前再次执行
+字段 allowlist、opaque ID 和 PII 检测，并对 LLM 生成的工具参数做 Schema、scope、tenant 与
+`If-Match` 校验。`allow_pii=false`、`allow_external_llm=true` 都不是 DLP 已完成的证明；artifact、
+Bearer 和下载票据不得进入 Prompt、记忆或 trace。完整硬门禁见
+[外部 Agent 平台接入契约](external-agent-integration.md#agent-平台必须执行的-dlp)。
+
 `budget.max_llm_tokens` 仅为 v1 兼容保留字段，本后端不消费它并始终报告
 `llm_tokens.used=0`。Agent 平台必须自行限制 LLM token、费用和调用次数。
 完整平台边界见 [外部 Agent 平台接入契约](external-agent-integration.md)。
@@ -478,7 +484,7 @@ curl -sS "$AUTOML_API/v1/agent/manifest" \
     "target_column": "monthly_revenue",
     "task_type": "REGRESSION",
     "iid_confirmed": true,
-    "primary_metric": "root_mean_squared_error"
+    "primary_metric": "rmse"
   }
 }
 ```

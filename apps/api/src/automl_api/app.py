@@ -1151,6 +1151,29 @@ def create_app(
             "stages": snapshot["stages"],
         }
 
+    async def public_run_events(
+        run_id: str,
+        *,
+        after_seq: int,
+        types: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        events = await state.get_events(run_id, after_seq=after_seq, types=types)
+        legacy_failures = [
+            event
+            for event in events
+            if event.get("type") == "run.failed.v1" and "retriable" not in event.get("payload", {})
+        ]
+        if not legacy_failures:
+            return events
+        result = await state.get_result(run_id)
+        reason = result.get("reason", {}) if result is not None else {}
+        retriable = reason.get("retriable", False)
+        if not isinstance(retriable, bool):
+            retriable = False
+        for event in legacy_failures:
+            event["payload"]["retriable"] = retriable
+        return events
+
     async def sse_stream(
         *,
         run_id: str,
@@ -1166,7 +1189,7 @@ def create_app(
                 if monotonic() - last_authorized_at >= 30:
                     await service.get_run(principal, run_id)
                     last_authorized_at = monotonic()
-                events = await state.get_events(run_id, after_seq=position)
+                events = await public_run_events(run_id, after_seq=position)
                 if events:
                     for event in events:
                         if monotonic() - last_authorized_at >= 30:
@@ -1281,7 +1304,11 @@ def create_app(
             page_size = limit or 50
         if position < max(0, retained_from - 1):
             raise _event_cursor_expired(run_id, retained_from, position)
-        candidates = await state.get_events(run_id, after_seq=position, types=event_types)
+        candidates = await public_run_events(
+            run_id,
+            after_seq=position,
+            types=event_types,
+        )
         candidates = [item for item in candidates if int(item["seq"]) <= high_watermark]
         selected = candidates[:page_size]
         has_more = len(candidates) > page_size

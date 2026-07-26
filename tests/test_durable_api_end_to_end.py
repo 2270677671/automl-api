@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import time
 from pathlib import Path
@@ -155,3 +156,50 @@ def test_default_app_runs_and_recovers_real_durable_workflow(tmp_path: Path, mon
         assert recovered_run.status_code == 200, recovered_run.text
         assert recovered_run.json()["status"] == "TERMINAL"
         assert client.get(f"/v1/runs/{run_id}/result", headers=AUTH).status_code == 200
+
+
+def test_failed_run_event_remains_readable(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTOML_STATE_DIR", str(tmp_path / "state"))
+    rows = ["feature_a,feature_b,target"]
+    rows.extend(f"{index},{index % 7},{index * 0.5}" for index in range(80))
+    content = ("\n".join(rows) + "\n").encode()
+
+    with TestClient(create_app()) as client:
+        dataset_version_id = _upload_csv(client, content)
+        request = run_request(dataset_version_id)
+        request["objective"] = {
+            "backend_id": "sklearn",
+            "target_column": "target",
+            "task_type": "REGRESSION",
+            "iid_confirmed": True,
+            "primary_metric": "not-a-regression-metric",
+        }
+        created = client.post(
+            "/v1/runs",
+            headers=mutation_headers("durable-create-failed-run-0001"),
+            json=request,
+        )
+        assert created.status_code == 202, created.text
+        run_id = created.json()["run_id"]
+        terminal = _poll_run(client, run_id, lambda run: run["status"] == "TERMINAL")
+        assert terminal["outcome"] == "FAILED"
+
+        stored_events = asyncio.run(client.app.state.store.get_events(run_id))
+        assert stored_events[-1]["payload"]["retriable"] is False
+        with client.app.state.store._lock:
+            client.app.state.store._events[run_id][-1]["payload"].pop("retriable")
+
+        events = client.get(
+            f"/v1/runs/{run_id}/events",
+            headers={**AUTH, "Accept": "application/json"},
+            params={"after_seq": 0, "limit": 100},
+        )
+        assert events.status_code == 200, events.text
+        failed = events.json()["items"][-1]
+        assert failed["type"] == "run.failed.v1"
+        assert failed["payload"] == {
+            "outcome": "FAILED",
+            "failure_code": "INVALID_TARGET",
+            "retriable": False,
+            "result_href": f"/v1/runs/{run_id}/result",
+        }

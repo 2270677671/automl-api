@@ -1157,6 +1157,7 @@ class DurableWorkflowService(WorkflowService):
             {
                 "outcome": "FAILED",
                 "failure_code": code,
+                "retriable": retriable,
                 "result_href": f"/v1/runs/{run['run_id']}/result",
             },
         )

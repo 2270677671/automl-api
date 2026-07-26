@@ -1,6 +1,7 @@
 {
 	admin off
 	auto_https disable_redirects
+	default_sni {$AUTOML_PUBLIC_HOST}
 	log default {
 		format filter {
 			wrap json
@@ -11,9 +12,14 @@
 	}
 }
 
+:8443 {
+	respond 421
+}
+
 https://{$AUTOML_PUBLIC_HOST}:8443 {
 	tls internal
-	encode zstd gzip
+	@compressible not path /v1/artifact-downloads/*
+	encode @compressible zstd gzip
 
 	request_body {
 		max_size {$AUTOML_GATEWAY_MAX_BODY_BYTES}

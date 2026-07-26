@@ -314,7 +314,14 @@ def test_gateway_redacts_download_ticket_uris_and_defines_the_proxy_boundary() -
 
     assert "log_skip @download_ticket" in caddyfile
     assert "request>uri delete" in caddyfile
+    assert "@compressible not path /v1/artifact-downloads/*" in caddyfile
+    assert "encode @compressible zstd gzip" in caddyfile
+    assert "default_sni {$AUTOML_PUBLIC_HOST}" in caddyfile
+    assert ":8443 {\n\trespond 421\n}" in caddyfile
     assert 'AUTOML_FORWARDED_ALLOW_IPS: "*"' in compose
+    assert "cap_add: [DAC_OVERRIDE, NET_BIND_SERVICE]" in compose
+    assert "https://$$AUTOML_PUBLIC_HOST:8443/healthz" in compose
+    assert "healthcheck:\n      disable: true" in compose
     assert "header_up X-Forwarded-Proto https" in caddyfile
     assert 'project["dependencies"]' in dockerfile
     assert "--constraint requirements.production.lock" in dockerfile
@@ -351,6 +358,7 @@ def test_backup_verify_restore_and_tamper_detection(tmp_path: Path) -> None:
     state.mkdir()
     database = state / "automl.db"
     connection = sqlite3.connect(database)
+    assert connection.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
     connection.execute("CREATE TABLE marker(value TEXT NOT NULL)")
     connection.execute("INSERT INTO marker VALUES ('from-backup')")
     connection.commit()
@@ -362,6 +370,17 @@ def test_backup_verify_restore_and_tamper_detection(tmp_path: Path) -> None:
     backup = create_backup(state, tmp_path / "backups", retention_count=2)
     manifest = verify_backup(backup)
     assert manifest["schema_version"] == 1
+    assert {item["path"] for item in manifest["files"]} == {
+        "automl.db",
+        "objects/artifacts/tenant/report.json",
+    }
+    assert {
+        path.relative_to(backup).as_posix() for path in backup.rglob("*") if path.is_file()
+    } == {
+        "automl.db",
+        "manifest.json",
+        "objects/artifacts/tenant/report.json",
+    }
 
     target = tmp_path / "restored"
     target.mkdir()
