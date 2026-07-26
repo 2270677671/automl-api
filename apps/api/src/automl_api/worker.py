@@ -93,6 +93,11 @@ class LocalExecutionWorker:
         self._stop_event = asyncio.Event()
         self._poll_task: asyncio.Task[None] | None = None
 
+    @property
+    def is_running(self) -> bool:
+        task = self._poll_task
+        return task is not None and not task.done()
+
     async def start(self) -> None:
         if self._poll_task is not None and not self._poll_task.done():
             return

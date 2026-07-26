@@ -55,10 +55,14 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
+    os.umask(0o077)
     args = _parser().parse_args(argv)
     host = args.host.strip()
     if not host:
         raise SystemExit("host must not be empty")
+    forwarded_allow_ips = os.environ.get("AUTOML_FORWARDED_ALLOW_IPS", "127.0.0.1").strip()
+    if not forwarded_allow_ips:
+        raise SystemExit("AUTOML_FORWARDED_ALLOW_IPS must not be empty")
     with contract_path("automl-api.yaml") as packaged_contract:
         # The route is defined in app.py, but its response path is intentionally
         # replaced here so the supported console entry point works from a wheel.
@@ -69,6 +73,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             port=args.port,
             log_level=args.log_level,
             reload=False,
+            access_log=False,
+            proxy_headers=True,
+            forwarded_allow_ips=forwarded_allow_ips,
         )
 
 

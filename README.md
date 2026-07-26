@@ -1,12 +1,11 @@
 # Managed AutoML API
 
-> [!WARNING]
-> The Dockerfile defines a single-node partner-preview target plus a fail-closed formal production
-> target. The formal target bundles OIDC/JWKS, PostgreSQL, S3/KMS, and Webhook client dependencies,
-> but it does not wire those external runtime adapters. Consequently, in version 0.7.0,
-> `AUTOML_DEPLOYMENT_PROFILE=production` deliberately keeps `/readyz` at `503`
-> regardless of environment configuration. A later code release must wire and validate the external
-> runtime adapters before that hard fail-closed check can be removed.
+> [!IMPORTANT]
+> `single-node-production` is the supported small-scale production profile: JWT authentication,
+> private HTTPS, Host allowlisting, request limits, audit logs, metrics, SQLite WAL, immutable local
+> objects, serialized training, automatic verified backups, and Docker resource boundaries are
+> wired into the runtime. `cluster-production` remains fail-closed until PostgreSQL/RLS, S3/KMS,
+> isolated workers, and high-availability adapters are connected to the actual request path.
 
 This repository provides an API-first, resumable AutoML workflow and a synchronous Python SDK. In
 the default local profile it can:
@@ -64,8 +63,8 @@ Any non-empty Bearer token is accepted in this development profile. A hash of th
 the synthetic tenant. This is useful for local isolation tests, but it is not JWT validation or a
 production authentication boundary.
 
-Docker builds default to domestic sources for the Python base image and pip downloads:
-`docker.m.daocloud.io/library/python:3.12-slim` and
+Docker builds default to domestic sources for the digest-pinned Python base image and pip downloads:
+`docker.m.daocloud.io/library/python:3.12-slim@sha256:...` and
 `https://pypi.tuna.tsinghua.edu.cn/simple`. The full three-backend image pins the CPU-only PyTorch
 wheel from `https://download.pytorch.org/whl/cpu`, avoiding unused CUDA layers; a GPU image requires
 a separately reviewed Torch index/version and NVIDIA Container Toolkit configuration. Override the
@@ -77,7 +76,7 @@ docker build \
   --build-arg PIP_INDEX_URL=https://pypi.org/simple \
   --build-arg TORCH_FIND_LINKS=https://download.pytorch.org/whl/cpu/torch/ \
   --build-arg TORCH_VERSION=2.13.0+cpu \
-  -t managed-automl-api:0.7.0 .
+  -t managed-automl-api:0.8.0 .
 ```
 
 For Compose, set `AUTOML_PYTHON_BASE_IMAGE`, `AUTOML_PIP_INDEX_URL`, and (when loading or
@@ -143,38 +142,42 @@ as an offline-loadable tar file:
 ```bash
 python scripts/package_release.py \
   --skip-build \
-  --docker-image managed-automl-api:0.7.0
+  --target-platform linux/amd64 \
+  --docker-image managed-automl-api:0.8.0-production \
+  --docker-image docker.m.daocloud.io/library/caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
 ```
 
-An exported Docker image matches the build host's CPU architecture. For a different target
-architecture, let the receiver build from the included Dockerfile or publish a multi-architecture
-image through the target registry.
+Repeat `--docker-image` for every offline image. Shared layers are stored once in
+`images/docker-images.tar`. Bundle manifest schema 2 records the requested and loadable references,
+image ID, repo digest, image/archive byte sizes, archive SHA-256 and `os/architecture`. The command
+fails when images target mixed platforms or differ from `--target-platform`. Build or pull images
+for the receiver's platform before packaging; a local ARM image cannot be delivered to an amd64 host.
 
 The receiver should verify the bundle before installation:
 
 ```bash
-cd managed-automl-0.7.0-20260724T120000Z
+cd managed-automl-0.8.0-20260726T120000Z
 sha256sum -c SHA256SUMS  # macOS: shasum -a 256 -c SHA256SUMS
-python -m pip install wheels/automl_sdk-0.7.0-py3-none-any.whl
+python -m pip install wheels/automl_sdk-0.8.0-py3-none-any.whl
 # Only when the bundle includes images/*.tar:
-docker load --input images/managed-automl-api_0.7.0.tar
+docker load --input images/docker-images.tar
 ```
 
-For a controlled partner preview, use the default `AUTOML_DEPLOYMENT_PROFILE=partner-preview` and
-configure the authentication mode appropriate to that environment. The formal production target
-sets `AUTOML_DEPLOYMENT_PROFILE=production`; provide OIDC/JWKS (`AUTOML_JWKS_URL` or
-`AUTOML_JWKS_JSON`), `AUTOML_JWT_ISSUER`, `AUTOML_JWT_AUDIENCE`, PostgreSQL/RLS, S3/KMS, DLP,
-Webhook, deletion, model-registry, worker-isolation, `AUTOML_CURSOR_SECRET`, and
-`AUTOML_TICKET_SECRET` configuration. These values are inputs for integration testing; in 0.7.0 they
-cannot make the formal profile ready. `/readyz` always returns `503 production_preflight_failed`
-because the required external runtime adapters are not wired into request execution.
-Every public operation requires its exact scope:
-`automl:operation:<operationId>`.
+For an offline deployment, set `AUTOML_IMAGE` and `AUTOML_CADDY_IMAGE` to the manifest's
+`load_reference` values after `docker load`, then use Compose with `--no-build`. A registry digest
+may resolve to an untagged platform image when exported, so the original digest-qualified reference
+is evidence, while `load_reference` is the local name restored by Docker.
 
-Production delivery is intentionally gate-based. The formal image installs client dependencies and
-exposes the control-plane APIs, but dependency presence or environment strings never count as
-runtime readiness. Final exposure requires implementing and validating external identity, DLP,
-RLS, object storage, worker isolation, Webhook dispatcher, observability, and backup gates.
+For a third-party Agent platform, use
+[the single-node production runbook](docs/single-node-production.md) and
+`compose.production-single.yaml`. The API container has no host port; Caddy is the only published
+entry point and issues private-CA HTTPS by default. The profile uses short-lived JWTs with exact
+`automl:operation:<operationId>` scopes, and `/readyz` verifies live SQLite, object-store, worker,
+and backup-directory health in addition to static configuration.
+
+Use `cluster-production` only as an integration gate. It intentionally returns
+`503 production_preflight_failed` until the external PostgreSQL/RLS, S3/KMS, dispatcher, and
+isolated-worker adapters are implemented and validated.
 
 ## Python SDK quick path
 
@@ -302,12 +305,11 @@ supported task/media types, CPU/GPU traits, deterministic behavior, and artifact
 
 ## Current boundary
 
-The local vertical slice deliberately does not provide:
+The single-node production profile deliberately does not provide:
 
-- a complete external-infrastructure implementation for PostgreSQL/RLS, S3/KMS, production DLP,
-  audit controls, or high-availability identity federation; the image provides fail-closed
-  configuration and dependency gates, while those systems must be validated and operated by the
-  deployer;
+- PostgreSQL/RLS, S3/KMS, high availability, or an external identity provider; those belong to the
+  fail-closed `cluster-production` target. Single-node production instead uses protected local
+  state, JWT/JWKS or an independent HS256 key, private HTTPS, audit logs, and verified backups;
 - high availability, multi-process workers, distributed leases, lease heartbeats, or PostgreSQL
   transactional projections;
 - an outbound Webhook HTTP dispatcher, distributed deletion worker, model-serving endpoint, or
@@ -331,7 +333,8 @@ See [docs/api-usage.md](docs/api-usage.md) for the API workflow and examples,
 [docs/external-agent-integration.md](docs/external-agent-integration.md) for the platform boundary,
 [docs/framework-backends.md](docs/framework-backends.md) for the scikit-learn/AutoGluon/TabPFN
 backend contracts, [docs/production-delivery.md](docs/production-delivery.md) for the production
-handoff gates, [docs/test-report-0.7.0.md](docs/test-report-0.7.0.md) for the itemized verification
+handoff gates, [docs/single-node-production.md](docs/single-node-production.md) for deployable
+single-node production, [docs/test-report-0.8.0.md](docs/test-report-0.8.0.md) for the itemized verification
 report, and [openapi/automl-api.yaml](openapi/automl-api.yaml) for the canonical schema.
 
 ## Verify

@@ -12,6 +12,7 @@ from importlib import resources
 from pathlib import Path
 from time import monotonic
 from typing import Annotated, Any, AsyncIterator
+from uuid import uuid4
 
 import anyio
 from fastapi import Depends, FastAPI, Header, Path as PathParameter, Query, Request
@@ -30,6 +31,7 @@ from .auth import (
 )
 from .durable_workflow import DurableWorkflowService
 from .errors import APIProblem, current_correlation_id, install_problem_handlers
+from .hardening import RuntimeHardeningSettings, install_runtime_hardening
 from .limits import RuntimeLimits
 from .models import (
     AgentActionList,
@@ -70,8 +72,13 @@ from .models import (
     WebhookRedeliveryReceipt,
     WebhookSecretRotated,
 )
+from .operations import (
+    ACTIVE_AGENT_OPERATION_IDS,
+    CANONICAL_OPERATION_IDS,
+    CANONICAL_ROUTE_OPERATION_IDS,
+)
 from .persistence import SqliteStore
-from .production import ProductionSettings
+from .production import ProductionCheck, ProductionSettings
 from .protocol import (
     configure_cursor_secret,
     decode_cursor,
@@ -108,30 +115,8 @@ ROOT_DIR = Path(__file__).resolve().parents[4]
 OPENAPI_PATH = ROOT_DIR / "openapi" / "automl-api.yaml"
 ACTIVE_OPENAPI_PATH = ROOT_DIR / "openapi" / "automl-agent-tools.yaml"
 API_VERSION = "v1"
-PYTHON_SDK_COMPATIBLE_VERSIONS = ">=0.7,<0.8"
-ACTIVE_OPERATION_IDS = [
-    "getAgentInterfaceManifest",
-    "getAgentRunContext",
-    "listAgentRunActions",
-    "createDatasetUpload",
-    "signDatasetUploadParts",
-    "finalizeDatasetUpload",
-    "getDatasetVersion",
-    "createRun",
-    "getRun",
-    "readRunEvents",
-    "listRunOutputs",
-    "getRunOutput",
-    "listDecisionPackets",
-    "answerDecisionPacket",
-    "pauseRun",
-    "resumeRun",
-    "cancelRun",
-    "getCommand",
-    "getRunResult",
-    "getArtifact",
-    "createArtifactDownloadTicket",
-]
+PYTHON_SDK_COMPATIBLE_VERSIONS = ">=0.8,<0.9"
+ACTIVE_OPERATION_IDS = list(ACTIVE_AGENT_OPERATION_IDS)
 LOGGER = logging.getLogger("automl_api")
 _INSECURE_TICKET_SECRETS = frozenset(
     {
@@ -139,6 +124,16 @@ _INSECURE_TICKET_SECRETS = frozenset(
         "change-this-ticket-secret-before-deployment",
     }
 )
+_TRUTHY = {"1", "true", "yes", "on", "enabled"}
+
+
+def _enabled_environment(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in _TRUTHY
+
+
+def _public_base_url(request: Request) -> str:
+    configured = os.environ.get("AUTOML_PUBLIC_BASE_URL", "").strip()
+    return (configured or str(request.base_url)).rstrip("/")
 
 
 def _configured_ticket_secret(*, required: bool) -> bytes | None:
@@ -539,10 +534,13 @@ def create_app(
 
     limits = RuntimeLimits.from_env()
     production_settings = ProductionSettings.from_env()
+    hardening_settings = RuntimeHardeningSettings.from_env()
     owns_state = state is None
+    state_root: Path | None = None
     if state is None:
         state_root = Path(os.environ.get("AUTOML_STATE_DIR", ".automl-data")).resolve()
         state_root.mkdir(parents=True, exist_ok=True)
+        state_root.chmod(0o700)
         state = SqliteStore(state_root / "automl.db")
         blob_store = blob_store or LocalBlobStore(
             state_root / "objects",
@@ -551,6 +549,13 @@ def create_app(
         )
     else:
         blob_store = blob_store or SyntheticBlobStore()
+
+    backup_root: Path | None = None
+    configured_backup_dir = os.environ.get("AUTOML_BACKUP_DIR", "").strip()
+    if _enabled_environment("AUTOML_BACKUP_ENABLED") and configured_backup_dir:
+        backup_root = Path(configured_backup_dir).expanduser().resolve()
+        backup_root.mkdir(parents=True, exist_ok=True)
+        backup_root.chmod(0o700)
 
     durable_mode = isinstance(state, SqliteStore) and blob_store.durable
     worker: LocalExecutionWorker | None = None
@@ -601,7 +606,83 @@ def create_app(
     application.state.worker = worker
     application.state.runtime_limits = limits
     application.state.production = production_settings
+    application.state.runtime_hardening = hardening_settings
     install_problem_handlers(application)
+    metrics = install_runtime_hardening(application, hardening_settings)
+    application.state.metrics = metrics
+
+    async def runtime_production_checks() -> tuple[ProductionCheck, ...]:
+        required = production_settings.strict
+
+        sqlite_ok = False
+        sqlite_detail = "SQLite is not the active metadata adapter."
+        if isinstance(state, SqliteStore):
+            try:
+                result = await state.quick_check()
+                sqlite_ok = result == "ok"
+                sqlite_detail = (
+                    "SQLite quick_check passed."
+                    if sqlite_ok
+                    else "SQLite quick_check reported an integrity error."
+                )
+            except Exception:
+                sqlite_detail = "SQLite quick_check could not complete."
+
+        blob_ok = False
+        blob_detail = "The local immutable object store is not active."
+        if isinstance(blob_store, LocalBlobStore):
+            try:
+                await anyio.to_thread.run_sync(blob_store.quick_check)
+                blob_ok = True
+                blob_detail = "The local immutable object store passed a write probe."
+            except Exception:
+                blob_detail = "The local immutable object store write probe failed."
+
+        worker_ok = worker is not None and worker.is_running
+        worker_detail = (
+            "The serialized durable execution worker is running."
+            if worker_ok
+            else "The durable execution worker is not running."
+        )
+
+        backup_ok = False
+        backup_detail = "The backup directory is not configured."
+        if backup_root is not None:
+            unsafe_location = False
+            if state_root is not None:
+                try:
+                    backup_root.relative_to(state_root)
+                    unsafe_location = True
+                except ValueError:
+                    pass
+            if unsafe_location:
+                backup_detail = "The backup directory must be outside the live state directory."
+            else:
+                marker = backup_root / f".ready-{uuid4().hex}"
+                descriptor: int | None = None
+                try:
+                    descriptor = os.open(
+                        marker,
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                        0o600,
+                    )
+                    os.write(descriptor, b"ok")
+                    os.fsync(descriptor)
+                    backup_ok = True
+                    backup_detail = "The separate backup directory passed a write probe."
+                except OSError:
+                    backup_detail = "The backup directory write probe failed."
+                finally:
+                    if descriptor is not None:
+                        os.close(descriptor)
+                    marker.unlink(missing_ok=True)
+
+        return (
+            ProductionCheck("sqlite_quick_check", sqlite_ok, sqlite_detail, required),
+            ProductionCheck("local_blob_store", blob_ok, blob_detail, required),
+            ProductionCheck("worker_running", worker_ok, worker_detail, required),
+            ProductionCheck("backup_directory", backup_ok, backup_detail, required),
+        )
 
     @application.exception_handler(RequestValidationError)
     async def validation_problem(_request: Request, exc: RequestValidationError) -> JSONResponse:
@@ -628,6 +709,8 @@ def create_app(
 
     @application.get("/healthz", include_in_schema=False)
     async def health() -> dict[str, Any]:
+        if production_settings.strict:
+            return {"status": "ok"}
         mode = "milestone-2-local-durable" if durable_mode else "milestone-1-synthetic"
         return {
             "status": "ok",
@@ -637,19 +720,26 @@ def create_app(
 
     @application.get("/readyz", include_in_schema=False)
     async def readiness() -> dict[str, Any]:
-        if isinstance(state, SqliteStore):
-            await state.list_runs()
-        production = production_settings.manifest()
-        if production_settings.strict and not production_settings.ready:
+        production = production_settings.manifest(await runtime_production_checks())
+        if production_settings.strict and not production["ready"]:
             raise APIProblem(
                 503,
                 "production_preflight_failed",
                 "Production preflight failed",
-                "The formal production profile is not fully configured.",
+                "The selected production profile is not fully configured or healthy.",
                 retriable=True,
                 extras={"production": production},
             )
         return {"status": "ready", "production": production}
+
+    if hardening_settings.metrics_enabled:
+
+        @application.get("/metrics", include_in_schema=False)
+        async def service_metrics() -> Response:
+            return Response(
+                content=await metrics.render(),
+                media_type="text/plain; version=0.0.4; charset=utf-8",
+            )
 
     @application.get("/openapi.yaml", include_in_schema=False)
     async def canonical_openapi() -> Response:
@@ -693,7 +783,13 @@ def create_app(
                 "schema_version": "1.0",
                 "service_version": SERVICE_VERSION,
                 "api_version": API_VERSION,
-                "profile_id": "local-durable-tabular-v1" if durable_mode else "synthetic-v1",
+                "profile_id": (
+                    "single-node-production-tabular-v1"
+                    if production_settings.single_node
+                    else "local-durable-tabular-v1"
+                    if durable_mode
+                    else "synthetic-v1"
+                ),
                 "service_role": "AUTOML_EXECUTION_BACKEND",
                 "planner_location": "EXTERNAL_AGENT_PLATFORM",
                 "internal_llm_calls": False,
@@ -708,11 +804,11 @@ def create_app(
                 "python_sdk_compatible_versions": PYTHON_SDK_COMPATIBLE_VERSIONS,
                 "context_path_template": "/v1/runs/{run_id}/agent-context",
                 "actions_path_template": "/v1/runs/{run_id}/agent-actions",
-                "canonical_operation_ids": ACTIVE_OPERATION_IDS,
+                "canonical_operation_ids": list(CANONICAL_OPERATION_IDS),
                 "active_operation_ids": ACTIVE_OPERATION_IDS,
                 "operation_scopes": {
                     operation_id: scope_for_operation(operation_id)
-                    for operation_id in ACTIVE_OPERATION_IDS
+                    for operation_id in CANONICAL_OPERATION_IDS
                 },
                 "runtime_limits": limits.manifest(),
                 "default_backend_id": service.backend_registry.default_backend_id,
@@ -726,6 +822,11 @@ def create_app(
                     "offline_evaluation",
                     "human_interrupt_resume",
                     "agent_allowed_recommended_answers",
+                    *(
+                        ("single_node_production_runtime",)
+                        if production_settings.single_node
+                        else ()
+                    ),
                 ],
                 "unsupported_capabilities": [
                     "production_deployment",
@@ -735,6 +836,7 @@ def create_app(
                     "ranking",
                     "unbounded_hyperparameter_search",
                     "internal_llm_planning",
+                    "built_in_webhook_http_delivery",
                 ],
                 "supported_task_types": ["BINARY_CLASSIFICATION", "REGRESSION"],
                 "supported_media_types": [
@@ -758,7 +860,7 @@ def create_app(
             result = await service.create_dataset(
                 principal,
                 payload,
-                public_base_url=str(request.base_url).rstrip("/"),
+                public_base_url=_public_base_url(request),
             )
             return 201, _validated(DatasetUploadSession, result), {}
 
@@ -788,7 +890,7 @@ def create_app(
                 principal,
                 dataset_version_id,
                 payload,
-                public_base_url=str(request.base_url).rstrip("/"),
+                public_base_url=_public_base_url(request),
             )
             return 200, _validated(UploadPartsResponse, result), {}
 
@@ -1056,33 +1158,36 @@ def create_app(
         after_seq: int,
         event_types: list[str] | None,
     ):
-        position = after_seq
-        allowed = set(event_types) if event_types is not None else None
-        last_authorized_at = monotonic()
-        while True:
-            if monotonic() - last_authorized_at >= 30:
-                await service.get_run(principal, run_id)
-                last_authorized_at = monotonic()
-            events = await state.get_events(run_id, after_seq=position)
-            if events:
-                for event in events:
-                    if monotonic() - last_authorized_at >= 30:
-                        await service.get_run(principal, run_id)
-                        last_authorized_at = monotonic()
-                    position = max(position, int(event["seq"]))
-                    if allowed is not None and event["type"] not in allowed:
-                        continue
-                    data = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
-                    yield f"id: {event['seq']}\nevent: {event['type']}\ndata: {data}\n\n"
-                continue
-            snapshot = await service.get_run(principal, run_id)
-            if snapshot["status"] == "TERMINAL" and position >= snapshot["snapshot_seq"]:
-                return
-            events = await state.wait_for_events(run_id, position, timeout=15.0)
-            if not events:
-                await service.get_run(principal, run_id)
-                last_authorized_at = monotonic()
-                yield ": heartbeat\n\n"
+        try:
+            position = after_seq
+            allowed = set(event_types) if event_types is not None else None
+            last_authorized_at = monotonic()
+            while True:
+                if monotonic() - last_authorized_at >= 30:
+                    await service.get_run(principal, run_id)
+                    last_authorized_at = monotonic()
+                events = await state.get_events(run_id, after_seq=position)
+                if events:
+                    for event in events:
+                        if monotonic() - last_authorized_at >= 30:
+                            await service.get_run(principal, run_id)
+                            last_authorized_at = monotonic()
+                        position = max(position, int(event["seq"]))
+                        if allowed is not None and event["type"] not in allowed:
+                            continue
+                        data = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+                        yield f"id: {event['seq']}\nevent: {event['type']}\ndata: {data}\n\n"
+                    continue
+                snapshot = await service.get_run(principal, run_id)
+                if snapshot["status"] == "TERMINAL" and position >= snapshot["snapshot_seq"]:
+                    return
+                events = await state.wait_for_events(run_id, position, timeout=15.0)
+                if not events:
+                    await service.get_run(principal, run_id)
+                    last_authorized_at = monotonic()
+                    yield ": heartbeat\n\n"
+        finally:
+            await metrics.leave_stream(tenant_id=principal.tenant_id)
 
     @application.get("/v1/runs/{run_id}/events")
     async def read_run_events(
@@ -1119,6 +1224,19 @@ def create_app(
                 start = int(snapshot["snapshot_seq"])
             if start < max(0, retained_from - 1):
                 raise _event_cursor_expired(run_id, retained_from, start)
+            if not await metrics.enter_stream(
+                hardening_settings.max_sse_connections,
+                tenant_id=principal.tenant_id,
+                maximum_per_tenant=hardening_settings.max_sse_connections_per_tenant,
+            ):
+                raise APIProblem(
+                    503,
+                    "sse_capacity_reached",
+                    "SSE connection capacity reached",
+                    "Use paginated event polling or retry after another stream disconnects.",
+                    retriable=True,
+                    headers={"Retry-After": "1"},
+                )
             return StreamingResponse(
                 sse_stream(
                     run_id=run_id,
@@ -1515,7 +1633,7 @@ def create_app(
             result = await service.create_download_ticket(
                 principal,
                 artifact_id,
-                public_base_url=str(request.base_url).rstrip("/"),
+                public_base_url=_public_base_url(request),
             )
             return 201, _validated(DownloadTicket, result), {}
 
@@ -2460,6 +2578,19 @@ def create_app(
         _authorize_operation(principal, "getDeletionJob")
         deletion = service._owned(await state.get_deletion(deletion_id), principal)
         return JSONResponse(content=_validated(DeletionJob, _public_deletion(deletion)))
+
+    for route in application.routes:
+        methods = getattr(route, "methods", None)
+        path = getattr(route, "path", None)
+        if not methods or not isinstance(path, str):
+            continue
+        operation_ids = {
+            CANONICAL_ROUTE_OPERATION_IDS[(method, path)]
+            for method in methods
+            if (method, path) in CANONICAL_ROUTE_OPERATION_IDS
+        }
+        if len(operation_ids) == 1:
+            route.operation_id = operation_ids.pop()
 
     return application
 

@@ -135,6 +135,7 @@ class LocalBlobStore:
     ) -> None:
         self.root = Path(root).expanduser().resolve()
         self.root.mkdir(parents=True, exist_ok=True)
+        self.root.chmod(0o700)
         configured = os.environ.get("AUTOML_TICKET_SECRET")
         self._ticket_secret = ticket_secret or (
             configured.encode("utf-8") if configured else os.urandom(32)
@@ -201,6 +202,7 @@ class LocalBlobStore:
                     await handle.write(chunk)
                 await handle.flush()
             os.replace(temporary, destination)
+            destination.chmod(0o600)
         finally:
             temporary.unlink(missing_ok=True)
         value = digest.hexdigest()
@@ -271,6 +273,7 @@ class LocalBlobStore:
             if not hmac.compare_digest(actual_sha, expected_sha256):
                 raise BlobIntegrityError("uploaded SHA-256 does not match the declaration")
             os.replace(temporary, destination)
+            destination.chmod(0o600)
         finally:
             temporary.unlink(missing_ok=True)
 
@@ -311,6 +314,7 @@ class LocalBlobStore:
                 await handle.write(content)
                 await handle.flush()
             os.replace(temporary, destination)
+            destination.chmod(0o600)
         finally:
             temporary.unlink(missing_ok=True)
         return BlobInfo(
@@ -319,6 +323,18 @@ class LocalBlobStore:
             sha256=digest,
             etag=_etag(digest),
         )
+
+    def quick_check(self) -> None:
+        """Verify the local object root is writable without exposing stored bytes."""
+
+        marker = self.root / f".ready-{uuid4().hex}"
+        descriptor = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            os.write(descriptor, b"ok")
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+            marker.unlink(missing_ok=True)
 
     async def delete_key(self, key: str) -> bool:
         try:

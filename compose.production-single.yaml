@@ -1,0 +1,255 @@
+name: automl-api-production
+
+services:
+  automl-init:
+    build:
+      context: .
+      target: production
+      args:
+        PIP_INDEX_URL: "${AUTOML_PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+        PYTHON_BASE_IMAGE: "${AUTOML_PYTHON_BASE_IMAGE:-docker.m.daocloud.io/library/python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de}"
+        TORCH_FIND_LINKS: "${AUTOML_TORCH_FIND_LINKS:-https://download.pytorch.org/whl/cpu/torch/}"
+        TORCH_VERSION: "${AUTOML_TORCH_VERSION:-2.13.0+cpu}"
+        PIP_TRUSTED_HOST: "${AUTOML_PIP_TRUSTED_HOST:-}"
+    image: "${AUTOML_IMAGE:-managed-automl-api:0.8.0}"
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        install -d -o 10001 -g 10001 -m 0700 /var/lib/automl /var/backups/automl
+        test "$$(stat -c '%u:%g:%a' /var/lib/automl)" = "10001:10001:700"
+        test "$$(stat -c '%u:%g:%a' /var/backups/automl)" = "10001:10001:700"
+        test -d /data
+        test -d /config
+    volumes:
+      - type: bind
+        source: "${AUTOML_STATE_HOST_DIR:-./.automl-production/state}"
+        target: /var/lib/automl
+      - type: bind
+        source: "${AUTOML_BACKUP_HOST_DIR:-./.automl-production/backups}"
+        target: /var/backups/automl
+      - type: bind
+        source: "${AUTOML_CADDY_DATA_HOST_DIR:-./.automl-production/caddy-data}"
+        target: /data
+      - type: bind
+        source: "${AUTOML_CADDY_CONFIG_HOST_DIR:-./.automl-production/caddy-config}"
+        target: /config
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+
+  automl-api:
+    build:
+      context: .
+      target: production
+      args:
+        PIP_INDEX_URL: "${AUTOML_PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+        PYTHON_BASE_IMAGE: "${AUTOML_PYTHON_BASE_IMAGE:-docker.m.daocloud.io/library/python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de}"
+        TORCH_FIND_LINKS: "${AUTOML_TORCH_FIND_LINKS:-https://download.pytorch.org/whl/cpu/torch/}"
+        TORCH_VERSION: "${AUTOML_TORCH_VERSION:-2.13.0+cpu}"
+        PIP_TRUSTED_HOST: "${AUTOML_PIP_TRUSTED_HOST:-}"
+    image: "${AUTOML_IMAGE:-managed-automl-api:0.8.0}"
+    init: true
+    restart: unless-stopped
+    depends_on:
+      automl-init:
+        condition: service_completed_successfully
+    expose: ["8000"]
+    environment:
+      AUTOML_AGENT_CONTEXT_FIELD_ALLOWLIST: "${AUTOML_AGENT_CONTEXT_FIELD_ALLOWLIST:-run,objective,open_decision_packets,recent_output_refs,event_checkpoint,actions_href}"
+      AUTOML_ALLOWED_HOSTS: "${AUTOML_ALLOWED_HOSTS:-${AUTOML_PUBLIC_HOST:?set AUTOML_PUBLIC_HOST},automl-api,localhost,127.0.0.1}"
+      AUTOML_AUDIT_LOG_ENABLED: "true"
+      AUTOML_AUTH_MODE: "production"
+      AUTOML_AUTOGLUON_TIME_LIMIT_SECONDS: "${AUTOML_AUTOGLUON_TIME_LIMIT_SECONDS:-300}"
+      AUTOML_BACKEND_WORK_DIR: "/var/lib/automl/backend-work"
+      AUTOML_BACKUP_DIR: "/var/backups/automl"
+      AUTOML_BACKUP_ENABLED: "true"
+      AUTOML_BACKUP_RETENTION_COUNT: "${AUTOML_BACKUP_RETENTION_COUNT:-14}"
+      AUTOML_CURSOR_SECRET: "${AUTOML_CURSOR_SECRET:?run scripts/init_single_node_production.sh first}"
+      AUTOML_DELETION_SAGA_ENABLED: "true"
+      AUTOML_DEPLOYMENT_PROFILE: "single-node-production"
+      AUTOML_DLP_MODE: "strict"
+      AUTOML_HOST: "0.0.0.0"
+      AUTOML_JWKS_JSON: "${AUTOML_JWKS_JSON:-}"
+      AUTOML_JWKS_URL: "${AUTOML_JWKS_URL:-}"
+      AUTOML_JWT_ALGORITHMS: "${AUTOML_JWT_ALGORITHMS:-RS256}"
+      AUTOML_JWT_AUDIENCE: "${AUTOML_JWT_AUDIENCE:?set AUTOML_JWT_AUDIENCE}"
+      AUTOML_JWT_ISSUER: "${AUTOML_JWT_ISSUER:?set AUTOML_JWT_ISSUER}"
+      AUTOML_JWT_KEYS: "${AUTOML_JWT_KEYS:-}"
+      AUTOML_JWT_KID: "${AUTOML_JWT_KID:-single-node-1}"
+      AUTOML_JWT_LEEWAY_SECONDS: "${AUTOML_JWT_LEEWAY_SECONDS:-30}"
+      AUTOML_JWT_SECRET: "${AUTOML_JWT_SECRET:-}"
+      AUTOML_LOG_LEVEL: "${AUTOML_LOG_LEVEL:-info}"
+      AUTOML_MAX_ACTIVE_RUNS_PER_TENANT: "${AUTOML_MAX_ACTIVE_RUNS_PER_TENANT:-2}"
+      AUTOML_MAX_COMPUTE_CREDITS: "${AUTOML_MAX_COMPUTE_CREDITS:-20}"
+      AUTOML_MAX_CONCURRENT_REQUESTS: "${AUTOML_MAX_CONCURRENT_REQUESTS:-32}"
+      AUTOML_MAX_SSE_CONNECTIONS: "${AUTOML_MAX_SSE_CONNECTIONS:-16}"
+      AUTOML_MAX_SSE_CONNECTIONS_PER_TENANT: "${AUTOML_MAX_SSE_CONNECTIONS_PER_TENANT:-4}"
+      AUTOML_MAX_DATASET_BYTES: "${AUTOML_MAX_DATASET_BYTES:-104857600}"
+      AUTOML_MAX_STORAGE_BYTES_PER_TENANT: "${AUTOML_MAX_STORAGE_BYTES_PER_TENANT:-1073741824}"
+      AUTOML_MAX_TRIALS_PER_RUN: "${AUTOML_MAX_TRIALS_PER_RUN:-20}"
+      AUTOML_MAX_UPLOAD_PART_BYTES: "${AUTOML_MAX_UPLOAD_PART_BYTES:-104857600}"
+      AUTOML_MAX_WALL_TIME_SECONDS: "${AUTOML_MAX_WALL_TIME_SECONDS:-3600}"
+      AUTOML_METADATA_STORE: "sqlite"
+      AUTOML_METRICS_ENABLED: "true"
+      AUTOML_MODEL_REGISTRY_MODE: "enabled"
+      AUTOML_OBJECT_STORE: "local"
+      AUTOML_PORT: "8000"
+      AUTOML_FORWARDED_ALLOW_IPS: "*"
+      AUTOML_PUBLIC_BASE_URL: "https://${AUTOML_PUBLIC_HOST:?set AUTOML_PUBLIC_HOST}:${AUTOML_HTTPS_PORT:-8443}"
+      AUTOML_RATE_LIMIT_REQUESTS_PER_MINUTE: "${AUTOML_RATE_LIMIT_REQUESTS_PER_MINUTE:-600}"
+      AUTOML_RATE_LIMIT_MAX_BUCKETS: "${AUTOML_RATE_LIMIT_MAX_BUCKETS:-4096}"
+      AUTOML_REQUIRE_WORKER_ISOLATION: "true"
+      AUTOML_SINGLE_NODE_ACKNOWLEDGED: "true"
+      AUTOML_STATE_DIR: "/var/lib/automl"
+      AUTOML_TABPFN_CLASSIFIER_MODEL_PATH: "${AUTOML_TABPFN_CLASSIFIER_MODEL_PATH:-}"
+      AUTOML_TABPFN_DEVICE: "${AUTOML_TABPFN_DEVICE:-cpu}"
+      AUTOML_TABPFN_LICENSE_ACCEPTED: "${AUTOML_TABPFN_LICENSE_ACCEPTED:-false}"
+      AUTOML_TABPFN_MODEL_PATH: "${AUTOML_TABPFN_MODEL_PATH:-}"
+      AUTOML_TABPFN_MODEL_SOURCE: "${AUTOML_TABPFN_MODEL_SOURCE:-auto}"
+      AUTOML_TABPFN_REGRESSOR_MODEL_PATH: "${AUTOML_TABPFN_REGRESSOR_MODEL_PATH:-}"
+      AUTOML_TICKET_SECRET: "${AUTOML_TICKET_SECRET:?run scripts/init_single_node_production.sh first}"
+      AUTOML_TLS_TERMINATED: "true"
+      AUTOML_WEBHOOK_DISPATCH_MODE: "outbox"
+      AUTOML_WEBHOOK_SIGNING_REQUIRED: "true"
+      AUTOML_WORKER_ISOLATION: "container-bounded"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_REGION: "${AWS_REGION:-us-east-1}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      MKL_NUM_THREADS: "${AUTOML_ML_THREADS:-1}"
+      OMP_NUM_THREADS: "${AUTOML_ML_THREADS:-1}"
+      OPENBLAS_NUM_THREADS: "${AUTOML_ML_THREADS:-1}"
+      TABPFN_MODEL_CACHE_DIR: "/var/lib/automl/tabpfn-cache"
+      TABPFN_TOKEN: "${TABPFN_TOKEN:-}"
+    volumes:
+      - type: bind
+        source: "${AUTOML_STATE_HOST_DIR:-./.automl-production/state}"
+        target: /var/lib/automl
+      - type: bind
+        source: "${AUTOML_BACKUP_HOST_DIR:-./.automl-production/backups}"
+        target: /var/backups/automl
+    networks: [backend]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m,mode=0700,uid=10001,gid=10001
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: "${AUTOML_PIDS_LIMIT:-1024}"
+    cpus: "${AUTOML_CPU_LIMIT:-8.0}"
+    mem_limit: "${AUTOML_MEMORY_LIMIT:-16g}"
+    shm_size: "${AUTOML_SHM_SIZE:-1g}"
+    stop_grace_period: 2m
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=5).read()"
+      interval: 30s
+      timeout: 8s
+      start_period: 90s
+      retries: 5
+
+  automl-backup:
+    image: "${AUTOML_IMAGE:-managed-automl-api:0.8.0}"
+    restart: unless-stopped
+    depends_on:
+      automl-api:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        while :; do
+          if python -m automl_api.backup create; then
+            sleep "$$AUTOML_BACKUP_INTERVAL_SECONDS"
+          else
+            sleep "$$AUTOML_BACKUP_RETRY_SECONDS"
+          fi
+        done
+    environment:
+      AUTOML_BACKUP_DIR: "/var/backups/automl"
+      AUTOML_BACKUP_INTERVAL_SECONDS: "${AUTOML_BACKUP_INTERVAL_SECONDS:-86400}"
+      AUTOML_BACKUP_RETENTION_COUNT: "${AUTOML_BACKUP_RETENTION_COUNT:-14}"
+      AUTOML_BACKUP_RETRY_SECONDS: "${AUTOML_BACKUP_RETRY_SECONDS:-300}"
+      AUTOML_STATE_DIR: "/var/lib/automl"
+    volumes:
+      - type: bind
+        source: "${AUTOML_STATE_HOST_DIR:-./.automl-production/state}"
+        target: /var/lib/automl
+        read_only: true
+      - type: bind
+        source: "${AUTOML_BACKUP_HOST_DIR:-./.automl-production/backups}"
+        target: /var/backups/automl
+    networks: [backend]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m,mode=0700,uid=10001,gid=10001
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    cpus: "${AUTOML_BACKUP_CPU_LIMIT:-1.0}"
+    mem_limit: "${AUTOML_BACKUP_MEMORY_LIMIT:-512m}"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  gateway:
+    image: "${AUTOML_CADDY_IMAGE:-docker.m.daocloud.io/library/caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d}"
+    restart: unless-stopped
+    depends_on:
+      automl-api:
+        condition: service_healthy
+    ports:
+      - "${AUTOML_HTTPS_BIND_ADDRESS:-0.0.0.0}:${AUTOML_HTTPS_PORT:-8443}:8443"
+    environment:
+      AUTOML_GATEWAY_MAX_BODY_BYTES: "${AUTOML_GATEWAY_MAX_BODY_BYTES:-115343360}"
+      AUTOML_PUBLIC_HOST: "${AUTOML_PUBLIC_HOST:?set AUTOML_PUBLIC_HOST}"
+    volumes:
+      - type: bind
+        source: ./deploy/single-node/Caddyfile
+        target: /etc/caddy/Caddyfile
+        read_only: true
+      - type: bind
+        source: "${AUTOML_CADDY_DATA_HOST_DIR:-./.automl-production/caddy-data}"
+        target: /data
+      - type: bind
+        source: "${AUTOML_CADDY_CONFIG_HOST_DIR:-./.automl-production/caddy-config}"
+        target: /config
+    networks: [frontend, backend]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop: [ALL]
+    cap_add: [DAC_OVERRIDE]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    cpus: "${AUTOML_GATEWAY_CPU_LIMIT:-1.0}"
+    mem_limit: "${AUTOML_GATEWAY_MEMORY_LIMIT:-256m}"
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          wget --no-check-certificate --header="Host: $$AUTOML_PUBLIC_HOST:8443"
+          -qO- https://127.0.0.1:8443/healthz >/dev/null
+      interval: 30s
+      timeout: 8s
+      start_period: 15s
+      retries: 5
+
+networks:
+  frontend: {}
+  backend: {}

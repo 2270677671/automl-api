@@ -1,5 +1,6 @@
 **
 !pyproject.toml
+!requirements.production.lock
 !README.md
 !LICENSE
 !NOTICE

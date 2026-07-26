@@ -5,6 +5,17 @@ Semantic Versioning for the public HTTP and Python SDK contracts.
 
 ## Unreleased
 
+## 0.8.0 - 2026-07-26
+
+- Added a deployable `single-node-production` profile with private HTTPS, formal JWT scopes,
+  Host allowlisting, rate and concurrency limits, audit logs, Prometheus metrics, and live
+  readiness checks for SQLite, local object storage, the durable worker, and backups.
+- Added online consistency-checked backups, SHA-256 verification, recoverable restore tooling,
+  automatic backup scheduling, credential issuance, hardened filesystem permissions, and a
+  production Compose/Caddy runbook for third-party Agent platforms.
+- Kept `cluster-production` fail-closed until PostgreSQL/RLS, S3/KMS, isolated workers, and the
+  remaining high-availability runtime adapters are connected and tested.
+
 - Added production delivery guidance, a complete v1 API design document, a production environment
   template, and GitHub Actions CI coverage for linting, OpenAPI generation, tests, and release
   input verification.

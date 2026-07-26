@@ -1,4 +1,4 @@
-ARG PYTHON_BASE_IMAGE=docker.m.daocloud.io/library/python:3.12-slim
+ARG PYTHON_BASE_IMAGE=docker.m.daocloud.io/library/python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 ARG TORCH_FIND_LINKS=https://download.pytorch.org/whl/cpu/torch/
 ARG TORCH_VERSION=2.13.0+cpu
@@ -15,15 +15,18 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
 WORKDIR /build
 
-COPY pyproject.toml README.md LICENSE NOTICE CHANGELOG.md ./
-COPY apps/api/src ./apps/api/src
-COPY openapi ./openapi
-
+COPY requirements.production.lock ./
 RUN python -m pip wheel --wheel-dir /wheels \
+    --constraint requirements.production.lock \
     --find-links "${TORCH_FIND_LINKS}" \
     ${PIP_TRUSTED_HOST:+--trusted-host "${PIP_TRUSTED_HOST}"} \
     "torch==${TORCH_VERSION}" \
-    '.[all-backends]'
+    --requirement requirements.production.lock
+
+COPY pyproject.toml README.md LICENSE NOTICE CHANGELOG.md ./
+COPY apps/api/src ./apps/api/src
+COPY openapi ./openapi
+RUN python -m pip wheel --wheel-dir /wheels --no-deps .
 
 
 FROM ${PYTHON_BASE_IMAGE} AS runtime

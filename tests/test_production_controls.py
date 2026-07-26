@@ -246,7 +246,7 @@ def test_approval_expired_returns_conflict_through_http_decide_route() -> None:
 def test_formal_profile_never_claims_ready_without_external_runtime_adapters() -> None:
     settings = ProductionSettings.from_env(
         {
-            "AUTOML_DEPLOYMENT_PROFILE": "production",
+            "AUTOML_DEPLOYMENT_PROFILE": "cluster-production",
             "AUTOML_JWKS_URL": "https://identity.example.test/jwks",
             "AUTOML_DATABASE_URL": "postgresql://automl@example.test:5432/automl",
             "AUTOML_POSTGRES_RLS_REQUIRED": "true",

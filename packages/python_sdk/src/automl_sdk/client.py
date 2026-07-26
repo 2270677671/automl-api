@@ -41,6 +41,48 @@ from .exceptions import (
 
 JSONDict = dict[str, Any]
 
+CANONICAL_OPERATION_METHODS = {
+    "getAgentInterfaceManifest": "get_agent_manifest",
+    "getAgentRunContext": "get_agent_context",
+    "listAgentRunActions": "list_agent_actions",
+    "createDatasetUpload": "create_dataset",
+    "signDatasetUploadParts": "sign_upload_parts",
+    "finalizeDatasetUpload": "finalize_dataset",
+    "getDatasetVersion": "get_dataset_version",
+    "createRun": "create_run",
+    "listRuns": "list_runs",
+    "getRun": "get_run",
+    "listRunStages": "get_run_stages",
+    "readRunEvents": "get_run_events",
+    "listRunOutputs": "list_outputs",
+    "getRunOutput": "get_output",
+    "listRunExperiments": "list_run_experiments",
+    "getRunExperiment": "get_run_experiment",
+    "listDecisionPackets": "list_decision_packets",
+    "answerDecisionPacket": "answer_decision_packet",
+    "listRunApprovals": "list_approvals",
+    "decideApproval": "decide_approval",
+    "pauseRun": "pause_run",
+    "resumeRun": "resume_run",
+    "cancelRun": "cancel_run",
+    "getCommand": "get_command",
+    "getRunResult": "get_run_result",
+    "getArtifact": "get_artifact",
+    "createArtifactDownloadTicket": "create_artifact_download_ticket",
+    "getModelCandidate": "get_model_candidate",
+    "createWebhookEndpoint": "create_webhook_endpoint",
+    "listWebhookEndpoints": "list_webhook_endpoints",
+    "getWebhookEndpoint": "get_webhook_endpoint",
+    "deleteWebhookEndpoint": "delete_webhook_endpoint",
+    "rotateWebhookEndpointSecret": "rotate_webhook_endpoint_secret",
+    "enableWebhookEndpoint": "enable_webhook_endpoint",
+    "listWebhookDeliveries": "list_webhook_deliveries",
+    "getWebhookDelivery": "get_webhook_delivery",
+    "redeliverWebhookDelivery": "redeliver_webhook_delivery",
+    "deleteDataset": "delete_dataset",
+    "getDeletionJob": "get_deletion_job",
+}
+
 _TERMINAL_EVENT_TYPES = {
     "run.completed.v1",
     "run.failed.v1",
@@ -96,7 +138,7 @@ class AutoMLClient:
         self._clock = clock
         self._default_headers: dict[str, str] = {
             "Accept": "application/json",
-            "User-Agent": "automl-python-sdk/0.7.0",
+            "User-Agent": "automl-python-sdk/0.8.0",
         }
         self._token_provider = token if callable(token) else None
         credential = api_key or (token if isinstance(token, str) else None)

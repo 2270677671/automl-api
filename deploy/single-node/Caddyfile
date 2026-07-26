@@ -1,0 +1,48 @@
+{
+	admin off
+	auto_https disable_redirects
+	log default {
+		format filter {
+			wrap json
+			fields {
+				request>uri delete
+			}
+		}
+	}
+}
+
+https://{$AUTOML_PUBLIC_HOST}:8443 {
+	tls internal
+	encode zstd gzip
+
+	request_body {
+		max_size {$AUTOML_GATEWAY_MAX_BODY_BYTES}
+	}
+
+	@internal_operations path /metrics /readyz
+	respond @internal_operations 404
+	@download_ticket path_regexp download_ticket ^/v1/artifact-downloads/[^/]+$
+	log_skip @download_ticket
+
+	reverse_proxy automl-api:8000 {
+		health_uri /readyz
+		health_interval 30s
+		health_timeout 5s
+		header_up X-Forwarded-Proto https
+	}
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

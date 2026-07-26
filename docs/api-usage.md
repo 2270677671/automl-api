@@ -24,13 +24,14 @@ automl-api
 或使用 Docker/Compose：
 
 ```bash
-docker build -t managed-automl-api:0.7.0 .
-docker run --rm -p 127.0.0.1:8000:8000 managed-automl-api:0.7.0
+docker build -t managed-automl-api:0.8.0 .
+docker run --rm -p 127.0.0.1:8000:8000 managed-automl-api:0.8.0
 ```
 
 客户端统一使用 Bearer 认证。development profile 接受任意非空 token，并用 token hash 派生本地租户；
-生产 profile 必须配置 JWT/OIDC 等正式身份参数，但 0.7.0 的 formal production profile 仍会因
-固定失败的 `runtime_adapters` 检查让 `/readyz` 返回 `503`。这些配置不能把当前版本变成生产就绪。
+生产调用必须配置 JWT/OIDC 等正式身份参数。可交付的小规模部署使用
+`single-node-production`；需要 PostgreSQL/RLS、S3/KMS 和高可用时使用仍然 fail-closed 的
+`cluster-production`，直到相应 adapter 真正接线。
 
 ```bash
 export AUTOML_API=http://127.0.0.1:8000
@@ -321,7 +322,7 @@ DecisionPacket 选项、列名和问题文本仍可能含数据派生内容；�
 - 主要指标：`roc_auc`。
 - seed：后端内部固定/请求传入的 seed 用于可复现评估；公开 API 当前不暴露自定义 seed 字段。
 - 泄漏风险：上传前应移除发生在预测时点之后才知道的字段，例如 `cancel_date`、`refund_after_churn`。
-- 版本：API/SDK 0.7.0，标准后端为 scikit-learn、AutoGluon Tabular、TabPFN。
+- 版本：API/SDK 0.8.0，标准后端为 scikit-learn、AutoGluon Tabular、TabPFN。
 - 限制：当前 artifact 仅为离线评估产物；成功 Run 不代表生产可部署模型。
 
 ```python

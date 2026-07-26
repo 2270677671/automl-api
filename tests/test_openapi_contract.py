@@ -16,6 +16,7 @@ from automl_api.models import (
     QuestionOptionRisk,
     QuestionSelectionMode,
 )
+from automl_api.operations import CANONICAL_OPERATION_IDS
 from scripts.generate_agent_openapi import (
     ACTIVE_OPERATION_IDS,
     parse_operations,
@@ -157,5 +158,8 @@ def test_agent_tools_operations_exist_in_the_runtime_routes(client) -> None:
 
 def test_canonical_operation_ids_are_unique() -> None:
     canonical = CANONICAL_PATH.read_text(encoding="utf-8")
-    operation_ids = [item.operation_id for item in parse_operations(canonical)]
+    operation_ids = [
+        item.operation_id for item in parse_operations(canonical) if item.path != "runEvent"
+    ]
     assert len(operation_ids) == len(set(operation_ids))
+    assert operation_ids == list(CANONICAL_OPERATION_IDS)

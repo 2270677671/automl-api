@@ -4,7 +4,7 @@ Live workflow helpers use reliable paged JSON event replay as the portable
 fallback when an application does not run a dedicated SSE consumer.
 """
 
-from .client import AutoMLClient
+from .client import CANONICAL_OPERATION_METHODS, AutoMLClient
 from .exceptions import (
     APIError,
     AuthenticationError,
@@ -35,6 +35,7 @@ __all__ = [
     "AuthorizationError",
     "AutoMLAPIError",
     "AutoMLClient",
+    "CANONICAL_OPERATION_METHODS",
     "AutoMLError",
     "BadRequestError",
     "CollectionCursorExpiredError",
@@ -54,4 +55,4 @@ __all__ = [
     "WaitTimeoutError",
 ]
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"

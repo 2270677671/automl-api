@@ -9,12 +9,12 @@ Webhook endpoints/deliveries, and deletion jobs.
 ## Compatibility and installation
 
 SDK `0.7.x` is compatible with API `0.7.x`; the service manifest reports the
-machine-readable range `>=0.7,<0.8`.
+machine-readable range `>=0.8,<0.9`.
 
 Install the delivered wheel:
 
 ```bash
-python -m pip install automl_sdk-0.7.0-py3-none-any.whl
+python -m pip install automl_sdk-0.8.0-py3-none-any.whl
 ```
 
 ## Minimal workflow

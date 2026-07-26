@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from automl_sdk import AutoMLClient
+from automl_api.operations import ACTIVE_AGENT_OPERATION_IDS, CANONICAL_OPERATION_IDS
 
 from .helpers import AUTH, create_ready_dataset, create_waiting_run, mutation_headers, run_request
 
@@ -36,7 +37,7 @@ def test_agent_manifest_declares_an_external_planner_without_an_internal_llm(
     assert body["max_llm_tokens_consumed"] is False
     assert body["credentials_must_remain_in_platform"] is True
     assert body["production_external_llm_safe"] is False
-    assert body["service_version"] == "0.7.0"
+    assert body["service_version"] == "0.8.0"
     assert body["api_version"] == "v1"
     assert body["agent_tools_openapi_href"] == "/v1/agent/tool-openapi.yaml"
     assert len(body["agent_tools_openapi_sha256"]) == 64
@@ -64,6 +65,10 @@ def test_agent_manifest_declares_an_external_planner_without_an_internal_llm(
     assert sklearn_backend["available"] is True
     assert "answerDecisionPacket" in body["canonical_operation_ids"]
     assert "answerDecisionPacket" in body["active_operation_ids"]
+    assert body["canonical_operation_ids"] == list(CANONICAL_OPERATION_IDS)
+    assert body["active_operation_ids"] == list(ACTIVE_AGENT_OPERATION_IDS)
+    assert set(body["operation_scopes"]) == set(CANONICAL_OPERATION_IDS)
+    assert "built_in_webhook_http_delivery" in body["unsupported_capabilities"]
     assert body["context_path_template"] == "/v1/runs/{run_id}/agent-context"
 
     tools_contract = client.get("/v1/agent/tool-openapi.yaml", headers=AUTH)

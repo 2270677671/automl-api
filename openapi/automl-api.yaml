@@ -2,15 +2,17 @@ openapi: 3.1.0
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: Managed AutoML API
-  version: 0.7.0
+  version: 0.8.0
   x-active-implementation-milestone: milestone-2-local-durable-plus-control-plane
-  x-production-ready: false
-  x-production-image-ready: false
+  x-production-ready: true
+  x-production-image-ready: true
+  x-single-node-production-ready: true
+  x-cluster-production-ready: false
   x-implementation-profile:
     persistence: single-node-sqlite-checkpoint
     object-storage: local-filesystem
     execution: single-local-worker
-    authentication: development-synthetic-preview-hs256-or-oidc-jwks
+    authentication: development-synthetic-or-production-hs256-or-oidc-jwks
     llm-integration: external-agent-platform
     internal-llm-calls: false
   license:
@@ -23,15 +25,16 @@ info:
     编排器、对象存储、实验追踪和 worker 均为内部实现选择，不作为公共契约暴露。
     API 使用四层读取模型：RunSnapshot、RunEvent、OutputResource、RunResult。
 
-    当前激活实现包含可重启恢复的单机 durable profile 和生产控制面预览：支持真实
+    当前激活实现包含可重启恢复的单机 durable profile 和受控单节点生产 profile：支持真实
     CSV/Parquet 上传、SQLite checkpoint、受限的二分类/回归训练、结构化人工中断/继续、
     可校验 artifact 下载、OIDC/JWKS token 验证、Webhook outbox、审批 workflow、
     deletion job 和审批通过后的 ModelCandidate 注册。
 
-    正式 Docker target 已安装生产客户端依赖，但仍使用 SQLite、本地对象存储和进程内 worker，
-    因此 `x-production-image-ready=false` 且 formal profile 的 `/readyz` 必须 fail closed。
-    在接入真实 PostgreSQL/RLS、对象存储/KMS、DLP、隔离 worker、Webhook dispatcher、
-    可观测性和备份演练前，不应直接暴露给真实生产租户。
+    `single-node-production` 使用 JWT、HTTPS、SQLite WAL、本地不可变对象、串行 worker、
+    资源边界、审计、指标和校验备份，适合一台受控主机、有限租户和可接受维护窗口的生产服务。
+    它不包含内置 Webhook HTTP dispatcher，事件通知使用 SSE/轮询或外部 outbox dispatcher。
+    `cluster-production` 在 PostgreSQL/RLS、S3/KMS、独立 worker 和高可用 adapter 接入前保持
+    `/readyz` fail closed，不得把单节点资格解释为集群或公网多租户生产资格。
 servers:
   - url: /
     description: 当前 API origin
@@ -59,9 +62,9 @@ tags:
   - name: Models
     description: 通过门禁的 eligible candidate；当前本地 profile 不注册模型。
   - name: Webhooks
-    description: 后续离线事件通知契约；当前未实现。
+    description: Durable endpoint/outbox 管理；内置 HTTP dispatcher 当前未实现，事件通知使用 SSE/轮询或外部 dispatcher。
   - name: Deletions
-    description: 后续数据与派生资源删除 saga 契约；当前未实现。
+    description: 数据与派生资源删除 saga、状态和凭证。
 
 paths:
   /v1/agent/manifest:
@@ -1054,8 +1057,13 @@ webhooks:
     post:
       operationId: receiveRunEventWebhook
       summary: Run 事件投递
+      x-runtime-delivery: external-dispatcher-required
       security: []
       description: |
+        本 callback 定义供独立 outbox dispatcher 与接收方互操作。0.8.0 单节点服务只持久化
+        endpoint、delivery 和人工 redelivery 请求，不会自行发起 HTTP 请求；未部署外部 dispatcher
+        时，Agent 平台必须使用 RunEvent JSON 分页或 SSE。
+
         至少一次投递。X-AutoML-Timestamp 是 Unix 秒。X-AutoML-Signature 格式为
         `v1=<lowercase hex>`。signing_secret 是 32 个随机字节的无填充 base64url 编码，
         接收方先将其解码为 32 字节 key，再计算 HMAC-SHA256(key,
@@ -1330,7 +1338,7 @@ components:
         - supported_media_types
       properties:
         schema_version: {type: string, const: '1.0'}
-        service_version: {type: string, example: 0.7.0}
+        service_version: {type: string, example: 0.8.0}
         api_version: {type: string, const: v1}
         profile_id:
           type: string

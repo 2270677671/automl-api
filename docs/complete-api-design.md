@@ -265,7 +265,7 @@ API 不提供：
 
 ## 11. Webhook 生产设计
 
-Webhook endpoint 与 outbox 路由已在 0.7.0 实现。实际 HTTP 投递和重试由独立 dispatcher worker
+Webhook endpoint 与 outbox 路由已在 0.8.0 实现。实际 HTTP 投递和重试由独立 dispatcher worker
 负责；正式部署必须满足以下行为：
 
 - endpoint 创建时返回一次性 `signing_secret`。
@@ -312,7 +312,7 @@ Webhook endpoint 与 outbox 路由已在 0.7.0 实现。实际 HTTP 投递和重
 
 ## 14. 版本和兼容策略
 
-- HTTP API 使用语义化版本，当前为 0.7.0。
+- HTTP API 使用语义化版本，当前为 0.8.0。
 - v1 path 保持向后兼容；破坏性变更进入新版本 path 或新 major。
 - Event type 使用 `.v1` 后缀，新增事件类型必须兼容旧客户端忽略策略。
 - OutputResource 使用 `type` discriminator，新增输出类型不能改变旧类型字段含义。

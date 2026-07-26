@@ -6,7 +6,9 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from automl_api.operations import CANONICAL_OPERATION_IDS
 from automl_sdk import (
+    CANONICAL_OPERATION_METHODS,
     AutoMLClient,
     ConflictError,
     EventCursorExpiredError,
@@ -118,6 +120,12 @@ def test_sdk_exposes_production_control_plane_helpers(client: TestClient) -> Non
     assert endpoint["status"] == "ACTIVE"
     assert len(endpoint["signing_secret"]) == 43
     assert sdk.get_webhook_endpoint(endpoint["webhook_endpoint_id"])["status"] == "ACTIVE"
+    assert (
+        sdk.enable_webhook_endpoint(
+            endpoint["webhook_endpoint_id"], idempotency_key="sdk-webhook-enable-0001"
+        )["status"]
+        == "ACTIVE"
+    )
     rotated = sdk.rotate_webhook_endpoint_secret(
         endpoint["webhook_endpoint_id"], idempotency_key="sdk-webhook-rotate-0001"
     )
@@ -127,6 +135,12 @@ def test_sdk_exposes_production_control_plane_helpers(client: TestClient) -> Non
     create_waiting_run(client, "sdk-webhook-delivery-0001")
     deliveries = sdk.list_webhook_deliveries(endpoint["webhook_endpoint_id"])
     delivery = deliveries["items"][0]
+    assert (
+        sdk.get_webhook_delivery(endpoint["webhook_endpoint_id"], delivery["delivery_id"])[
+            "delivery_id"
+        ]
+        == delivery["delivery_id"]
+    )
     redelivery = sdk.redeliver_webhook_delivery(
         endpoint["webhook_endpoint_id"],
         delivery["delivery_id"],
@@ -140,6 +154,56 @@ def test_sdk_exposes_production_control_plane_helpers(client: TestClient) -> Non
     sdk.delete_webhook_endpoint(
         endpoint["webhook_endpoint_id"], idempotency_key="sdk-webhook-delete-0001"
     )
+
+
+def test_sdk_declares_one_public_method_for_every_canonical_operation() -> None:
+    assert set(CANONICAL_OPERATION_METHODS) == set(CANONICAL_OPERATION_IDS)
+    for method_name in CANONICAL_OPERATION_METHODS.values():
+        assert callable(getattr(AutoMLClient, method_name, None)), method_name
+
+
+def test_sdk_routes_less_common_production_methods() -> None:
+    calls: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        status_code = (
+            202
+            if request.method == "POST"
+            and request.url.path == "/v1/runs/run_1/approvals/apr_1:decide"
+            else 200
+        )
+        return httpx.Response(status_code, json={})
+
+    sdk = AutoMLClient(
+        "https://automl.example",
+        token="platform-token",
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        sdk.sign_upload_parts("dsv_1", upload_id="upl_1", part_numbers=[1])
+        sdk.list_approvals("run_1")
+        sdk.decide_approval(
+            "run_1",
+            "apr_1",
+            decision="APPROVE",
+            reason="reviewed",
+            evidence_version=1,
+        )
+        sdk.get_model_candidate("mdl_1")
+        sdk.enable_webhook_endpoint("wh_1")
+        sdk.get_webhook_delivery("wh_1", "whd_1")
+    finally:
+        sdk.close()
+
+    assert calls == [
+        ("POST", "/v1/dataset-versions/dsv_1/upload-parts:sign"),
+        ("GET", "/v1/runs/run_1/approvals"),
+        ("POST", "/v1/runs/run_1/approvals/apr_1:decide"),
+        ("GET", "/v1/models/mdl_1"),
+        ("POST", "/v1/webhook-endpoints/wh_1:enable"),
+        ("GET", "/v1/webhook-endpoints/wh_1/deliveries/whd_1"),
+    ]
 
 
 def test_sdk_finds_blocking_decision_packet_on_second_cursor_page(
@@ -266,7 +330,7 @@ def test_sdk_lists_available_backends_from_the_agent_manifest() -> None:
 def test_official_sdk_version_is_accepted_by_manifest(client: TestClient) -> None:
     sdk = AutoMLClient("http://testserver", token="test-tenant-token", http_client=client)
     manifest = sdk.get_agent_manifest()
-    assert manifest["python_sdk_compatible_versions"] == ">=0.7,<0.8"
+    assert manifest["python_sdk_compatible_versions"] == ">=0.8,<0.9"
 
 
 def test_sdk_retries_retryable_statuses_only_when_write_is_idempotent() -> None:

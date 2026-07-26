@@ -2,7 +2,7 @@
 
 ## 1. 文档说明
 
-本文面向外部 Agent 平台、SDK 开发者和 API 接入工程师，逐项说明 Managed AutoML API 0.7.0 的 HTTP 路由用途、状态和调用示例。控制面字段、枚举和响应 Schema 以 [OpenAPI 3.1 契约](../openapi/automl-api.yaml) 为准；上传字节和下载票据 URL 属于 data-plane 路由，由控制面响应提供，不允许客户端自行拼接。
+本文面向外部 Agent 平台、SDK 开发者和 API 接入工程师，逐项说明 Managed AutoML API 0.8.0 的 HTTP 路由用途、状态和调用示例。控制面字段、枚举和响应 Schema 以 [OpenAPI 3.1 契约](../openapi/automl-api.yaml) 为准；上传字节和下载票据 URL 属于 data-plane 路由，由控制面响应提供，不允许客户端自行拼接。
 
 当前服务是独立 AutoML 执行后端，不内置 LLM。外部 Agent 平台负责 LLM、Prompt、凭据保管、预算和人机交互；本 API 负责数据上传、运行编排、结构化中断、训练评估、输出和 artifact 下载。
 
@@ -69,11 +69,12 @@ curl -sS "$AUTOML_API/healthz"
 
 ### 4.2 GET `/readyz`
 
-用途：就绪检查。SQLite profile 会执行一次轻量 store 查询。该路由不需要 Bearer token，不在 OpenAPI schema 中。
+用途：就绪检查。该路由不需要 Bearer token，不在 OpenAPI schema 中。
 
-响应：local/partner-preview profile 就绪时返回 `200`。0.7.0 的 formal production profile
-包含一个固定失败的 `runtime_adapters` 必选检查，因此无论环境变量是否齐全都返回
-`503 production_preflight_failed`；它不能作为当前版本的生产启动探针。
+响应：local/partner-preview profile 就绪时返回 `200`。`single-node-production` 还会实时检查
+SQLite `quick_check`、本地对象存储写探针、训练 worker 和独立备份目录，全部通过才返回 `200`。
+`cluster-production` 在外部 runtime adapter 真正接线前返回
+`503 production_preflight_failed`。
 
 ```bash
 curl -sS "$AUTOML_API/readyz"
@@ -668,7 +669,7 @@ curl -sS -L "$DOWNLOAD_URL" \
 
 ### 4.30 GET `/v1/runs/{run_id}/experiments`
 
-用途：列出 Run 实验。当前 0.7.0 是兼容占位路由，返回空页。
+用途：列出 Run 实验。当前 0.8.0 是兼容占位路由，返回空页。
 
 认证：需要 Bearer。
 
@@ -685,7 +686,7 @@ curl -sS "$AUTOML_API/v1/runs/run_000000000001/experiments" \
 
 ### 4.31 GET `/v1/runs/{run_id}/experiments/{experiment_id}`
 
-用途：读取单个实验详情。当前 0.7.0 尚未注册实验资源，返回 `404`。
+用途：读取单个实验详情。当前 0.8.0 尚未注册实验资源，返回 `404`。
 
 认证：需要 Bearer。
 
@@ -729,7 +730,7 @@ curl -sS -i -X POST "$AUTOML_API/v1/runs/run_000000000001/approvals/apr_00000000
 认证：需要 Bearer。
 
 ```bash
-curl -sS -i "$AUTOML_API/v1/models/model_000000000001" \
+curl -sS -i "$AUTOML_API/v1/models/mdl_000000000001" \
   -H "Authorization: Bearer $AUTOML_TOKEN"
 ```
 
@@ -738,6 +739,10 @@ curl -sS -i "$AUTOML_API/v1/models/model_000000000001" \
 用途：Webhook 管理和投递查询。当前 API 已支持 endpoint 创建、列表、读取、删除、
 密钥轮换、启用、delivery outbox 查询和人工重投；真实 HTTP 投递 dispatcher 可作为独立
 worker 消费 outbox。
+
+注意：0.8.0 镜像不包含 HTTP dispatcher。仅创建 endpoint 不会产生网络回调；未部署独立
+dispatcher 时必须使用 RunEvent JSON 分页或 SSE。canonical OpenAPI 的 callback 段是外部
+dispatcher 与接收端的互操作协议，不代表 API 容器会自行发送。
 
 认证：需要 Bearer；生产模式下仍会按具体 operation 做 scope 检查。
 

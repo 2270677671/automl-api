@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from collections.abc import Mapping
 from contextlib import contextmanager
@@ -84,6 +85,8 @@ class SqliteStore(InMemoryStore):
             check_same_thread=False,
         )
         self._connection.row_factory = sqlite3.Row
+        if self.database_path != ":memory:":
+            os.chmod(self.database_path, 0o600)
         self._configure_database()
         self._create_schema()
         snapshot = self._load_checkpoint()
@@ -781,6 +784,15 @@ class SqliteStore(InMemoryStore):
                 ).fetchone()
             assert updated is not None
             return self._job_from_row(updated)
+
+    async def quick_check(self) -> str:
+        """Run SQLite's lightweight integrity check without mutating stored state."""
+
+        with self._durability_lock:
+            self._ensure_open()
+            rows = self._connection.execute("PRAGMA quick_check").fetchall()
+            messages = [str(row[0]) for row in rows]
+            return "ok" if messages == ["ok"] else "; ".join(messages)
 
     async def close(self) -> None:
         with self._durability_lock:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "automl-sdk"
-version = "0.7.0"
+version = "0.8.0"
 description = "Synchronous Python SDK for the Managed AutoML HTTP API"
 readme = "README.md"
 license = "LicenseRef-Proprietary"

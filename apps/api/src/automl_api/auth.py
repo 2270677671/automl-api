@@ -8,9 +8,10 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Any, Literal, Protocol, runtime_checkable
 
-from fastapi import Depends, Header
+from fastapi import Depends, Header, Request
 
 from .errors import APIProblem
+from .operations import KNOWN_OPERATION_IDS
 from .security import (
     ActorType,
     HS256JWTVerifier,
@@ -218,10 +219,19 @@ def authenticate_bearer_token(
     return build_authenticator(settings, verifier=verifier).authenticate(token.strip())
 
 
-async def require_principal(authorization: str | None = Header(default=None)) -> Principal:
+async def require_principal(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> Principal:
     token = _extract_bearer_token(authorization)
     try:
-        return authenticate_bearer_token(token)
+        principal = authenticate_bearer_token(token)
+        request.state.audit_principal = {
+            "tenant_id": principal.tenant_id,
+            "subject": principal.subject,
+            "actor_type": principal.actor_type,
+        }
+        return principal
     except AuthConfigurationError as error:
         raise APIProblem(
             status=503,
@@ -288,6 +298,8 @@ def scope_for_operation(operation_id: str) -> str:
 
     if not isinstance(operation_id, str) or _OPERATION_ID.fullmatch(operation_id) is None:
         raise ValueError("An operation id must be a valid OpenAPI operationId.")
+    if operation_id not in KNOWN_OPERATION_IDS:
+        raise ValueError("The operation id is not part of the canonical API contract.")
     return f"{OPERATION_SCOPE_PREFIX}{operation_id}"
 
 

@@ -6,9 +6,9 @@
 | --- | --- |
 | 文档目的 | 定义 Managed AutoML API 从本地可用版本走向生产交付所需的交付物、配置、安全门禁、运维流程和验收标准 |
 | 目标读者 | 平台负责人、后端工程、Agent 平台集成团队、运维/SRE、安全与合规评审人员 |
-| 当前代码版本 | 0.7.0 |
-| 当前实现 profile | `local-durable-tabular-v1` |
-| 生产交付判断 | API 设计和单节点交付包具备合作方集成条件；0.7.0 formal profile 固定未就绪，不能用于正式生产上线 |
+| 当前代码版本 | 0.8.0 |
+| 当前实现 profile | `local-durable-tabular-v1`、`single-node-production-tabular-v1` |
+| 生产交付判断 | `single-node-production` 可用于受控小规模生产；`cluster-production` 在外部 adapter 接线前保持未就绪 |
 
 ## 2. 交付结论
 
@@ -18,15 +18,15 @@
 - 外部 Agent 平台接入面：manifest、tool OpenAPI、Agent context 和 canonical action refs。
 - 数据上传、Run 创建、事件观察、结构化中断、回答后恢复、输出、结果和 artifact 下载闭环。
 - 标准 tabular 后端：scikit-learn、AutoGluon Tabular、TabPFN。TabPFN 的真实权重启用受许可、token 或 checkpoint 条件约束。
-- 单机 Docker/Compose 定义、formal profile fail-closed 配置、非 root 容器、只读文件系统和资源限制。
+- 单机生产 Compose：非 root API、只读文件系统、私有 HTTPS 网关、资源限制、审计、指标和自动备份。
 - 测试报告、路由手册、后端说明、外部 Agent 集成契约和 release bundle 校验工具。
 
-Dockerfile 的 formal target 声明以下依赖与控制面预览能力。当前最新工作树的全量 Docker 构建和
+Dockerfile 的 production target 声明以下依赖与控制面能力。当前最新工作树的全量 Docker 构建和
 容器 smoke 仍须按第 10 节重新验证，不能引用旧镜像作为本轮证据：
 
 - OIDC/JWKS verifier、PostgreSQL client、S3/KMS client、Webhook HTTP client 等生产依赖。
-- `AUTOML_DEPLOYMENT_PROFILE=production` 下的 `/readyz` hard fail-closed；0.7.0 中即使环境变量
-  齐全也固定返回 `503 production_preflight_failed`。
+- `single-node-production` 的 `/readyz` 同时检查配置与实际 SQLite、对象目录、worker 和备份目录。
+- `cluster-production` 保持 hard fail-closed，不会把仅存在的环境变量当作 runtime adapter。
 - PostgreSQL/RLS bootstrap SQL：`deploy/postgres/001_rls_schema.sql`。
 - Webhook endpoint、outbox delivery 查询、重投、禁用/启用和密钥轮换 API。
 - 生产部署审批 workflow，以及审批通过后的 `ModelCandidate` 注册和结果 manifest。
@@ -39,9 +39,9 @@ Dockerfile 的 formal target 声明以下依赖与控制面预览能力。当前
 - Webhook HTTP dispatcher 的真实投递、重试、死信和告警。
 - AutoGluon/TabPFN 的容器级硬隔离、硬超时和资源压力测试。
 
-因此，0.7.0 可以作为合作方 Agent 平台的嵌入式集成版本和非生产试运行版本；formal profile
-在本版本中恒为未就绪。完成第 11 节门禁后仍需发布接入真实 runtime adapter 的新版本，不能仅靠
-修改环境变量解除该门禁。
+因此，受控单机、有限租户、允许维护窗口的场景可使用
+`single-node-production`。需要多副本、水平扩展或外部存储的场景必须完成第 11 节的集群门禁，
+不能仅靠修改环境变量解除。
 
 ## 3. 交付物清单
 
@@ -54,9 +54,11 @@ Dockerfile 的 formal target 声明以下依赖与控制面预览能力。当前
 | 完整 API 设计 | `docs/complete-api-design.md` | 正式 v1 资源、状态机、路由矩阵和兼容策略 |
 | 外部 Agent 接入契约 | `docs/external-agent-integration.md` | API 与 Agent 平台的职责边界 |
 | 后端框架说明 | `docs/framework-backends.md` | scikit-learn、AutoGluon、TabPFN 的能力和限制 |
-| 测试报告 | `docs/test-report-0.7.0.md` | 逐项验证证据和限制 |
+| 测试报告 | `docs/test-report-0.8.0.md` | 逐项验证证据和限制 |
 | 生产交付方案 | `docs/production-delivery.md` | 本文档 |
 | 生产环境变量模板 | `.env.production.example` | Compose/部署系统的生产配置样例 |
+| 单机生产环境模板 | `.env.production-single.example` | 可运行单机生产配置 |
+| 单机生产手册 | `docs/single-node-production.md` | HTTPS、JWT、备份、升级和验收 |
 | Dockerfile/Compose | `Dockerfile`、`compose.yaml` | 本地和单节点部署 |
 | Python SDK | `packages/python_sdk` | 外部系统同步客户端 |
 | CI workflow | `.github/workflows/ci.yml` | lint、format、OpenAPI、pytest 验证 |
@@ -93,8 +95,7 @@ flowchart LR
 
 适用场景：
 
-- 合作方集成联调。
-- 内网非生产试运行。
+- 合作方集成联调与内网小规模生产。
 - 小规模 tabular 数据评估。
 - API 契约、SDK、Agent 平台适配验证。
 
@@ -103,20 +104,13 @@ flowchart LR
 - SQLite 和本地对象目录不能作为多副本生产状态层。
 - 容器内 AutoGluon/TabPFN 仍属于受信代码执行边界，不是强沙箱。
 - 当前 manifest 固定报告 `production_external_llm_safe=false`。
+- 内置 HTTP dispatcher 不可用；endpoint/outbox API 不能替代 SSE、轮询或独立 dispatcher。
+- state、backup 和异地副本必须部署在加密卷上；仓库不能替宿主机提供静态加密。
 - 默认 Run 返回 `NO_ELIGIBLE_MODEL`；只有显式设置 `REQUIRE_APPROVAL` 并完成审批才注册
   `ModelCandidate`，且 API 仍不自动部署在线推理服务。
 
-启动建议：
-
-```bash
-cp .env.example .env
-openssl rand -hex 32
-docker compose up -d --build
-curl -sS http://127.0.0.1:${AUTOML_BIND_PORT:-8000}/readyz
-```
-
-这会使用默认 `partner-preview` target。`.env.production.example` 只用于 formal profile 配置审查；
-0.7.0 将该 profile 的 `/readyz` 无条件保持为 `503`，不能用它启动一个被误认为生产就绪的服务。
+启动、TLS 信任、凭据签发、备份恢复和 GPU 验收按
+`docs/single-node-production.md` 执行。默认 `compose.yaml` 仍是 `partner-preview`，不可替代生产 Compose。
 
 ### 5.2 目标生产模式：多组件部署
 
@@ -131,7 +125,8 @@ curl -sS http://127.0.0.1:${AUTOML_BIND_PORT:-8000}/readyz
 
 ## 6. 生产配置
 
-目标生产实现必须设置以下配置。它们不会解除 0.7.0 formal profile 的固定 `503`：
+单机生产的完整配置见 `.env.production-single.example`。集群目标必须设置以下配置，
+但配置本身不会解除 `cluster-production` 的固定 `503`：
 
 | 配置 | 要求 |
 | --- | --- |
@@ -158,7 +153,7 @@ docker compose up -d
 curl -fsS http://127.0.0.1:${AUTOML_BIND_PORT:-8000}/readyz
 ```
 
-在 0.7.0 中，最后一步无论配置是否齐全都预期失败并返回
+在 `cluster-production` 中，最后一步预期失败并返回
 `503 production_preflight_failed`。只有实际 PostgreSQL/RLS、S3/KMS、DLP、隔离 worker 和
 dispatcher 已接入请求路径并完成验收后的新代码版本，才允许修改该门禁。
 
@@ -244,19 +239,24 @@ dispatcher 已接入请求路径并完成验收后的新代码版本，才允许
 4. 生成 release bundle：
 
    ```bash
-   python scripts/package_release.py --docker-image managed-automl-api:0.7.0
+   python scripts/package_release.py \
+     --target-platform linux/amd64 \
+     --docker-image managed-automl-api:0.8.0-production \
+     --docker-image "$AUTOML_CADDY_IMAGE"
    ```
 
-5. 校验 `SHA256SUMS`。
+5. 校验 `SHA256SUMS`、manifest schema 2 中每个镜像的 `platform`、`id`、`archive_sha256`
+   和 `load_reference`。离线接收方使用 `images/docker-images.tar` 一次加载全部镜像，并把
+   Compose 镜像变量设置为对应 `load_reference`。
 6. 在隔离环境执行 smoke：
    - `/healthz`
-   - partner-preview `/readyz` 返回 `200`；formal profile `/readyz` 返回预期的 `503`
+   - 容器内 single-node `/readyz` 返回 `200`；cluster profile 返回预期的 `503`
    - `/v1/agent/manifest`
    - CSV 上传到 sklearn Run 终态
    - artifact ticket 下载校验
 7. 发布 Git tag 和 release notes。
 
-## 11. 生产上线门禁
+## 11. 集群生产上线门禁
 
 | 编号 | 门禁 | 当前状态 | 验收方式 |
 | --- | --- | --- | --- |
@@ -269,8 +269,8 @@ dispatcher 已接入请求路径并完成验收后的新代码版本，才允许
 | G-007 | 审批 workflow | local 控制面可用；生产要求 human actor，完整审计待接入 | 状态转换、过期、身份和审计通过 |
 | G-008 | 删除 saga | local 字节删除和访问撤销可用；外部存储 worker 未实现 | 数据集、派生输出、artifact 和审计保留策略通过 |
 | G-009 | 模型注册和部署门禁 | local `ModelCandidate` 可用；真实质量门禁和部署未实现 | 合格结果只在质量/审批通过后出现 |
-| G-010 | 可观测性/审计/告警 | 未完成 | SLO dashboard、告警和审计查询可用 |
-| G-011 | 备份恢复 | 未完成 | 完整恢复演练通过 |
+| G-010 | 可观测性/审计/告警 | 单机已有指标和审计；集中告警待接入 | SLO dashboard、告警和审计查询可用 |
+| G-011 | 备份恢复 | 单机已实现带 hash manifest 的自动备份和可回滚恢复 | 完整恢复演练通过 |
 | G-012 | 合规与许可证 | 未完成 | AutoGluon/TabPFN/模型权重/数据用途审查完成 |
 
 ## 12. 交付验收标准
@@ -283,7 +283,14 @@ dispatcher 已接入请求路径并完成验收后的新代码版本，才允许
 - `pytest -q`、`ruff check .`、`ruff format --check .` 和 OpenAPI 生成检查通过。
 - release bundle 中包含 wheels、OpenAPI、Docker/Compose、生产交付文档、API 设计文档和校验文件。
 
-生产上线验收：
+单机生产上线验收：
+
+- `single-node-production` 的 `/readyz` 全部检查通过，只有 HTTPS 网关对外发布。
+- JWT 租户、scope、actor_type、过期和错误 audience 验证通过。
+- 至少完成一次备份恢复演练、端到端 Run 与资源压力测试。
+- GPU 部署须另外完成 CUDA 及 TabPFN 分类/回归真实权重验收。
+
+集群生产上线验收：
 
 - 第 11 节所有门禁为“完成”。
 - 生产环境 manifest 可将 `production_external_llm_safe` 置为真实状态；在未完成 DLP 前不得置为 true。

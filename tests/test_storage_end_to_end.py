@@ -45,13 +45,15 @@ def _upload_csv(client: TestClient, content: bytes, suffix: str) -> dict[str, ob
     return session
 
 
-def test_real_upload_integrity_and_artifact_range_download(tmp_path) -> None:
+def test_real_upload_integrity_and_artifact_range_download(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AUTOML_PUBLIC_BASE_URL", "https://automl.partner.test:8443")
     blob_store = LocalBlobStore(tmp_path / "objects", ticket_secret=b"test-secret" * 4)
     application = create_app(InMemoryStore(), blob_store=blob_store)
     content = b"feature,target\n1,0\n2,1\n3,0\n4,1\n"
 
     with TestClient(application) as client:
         session = _upload_csv(client, content, "0001")
+        assert str(session["parts"][0]["url"]).startswith("https://automl.partner.test:8443/")
         run = client.post(
             "/v1/runs",
             headers=mutation_headers("real-run-create-0001"),
@@ -81,6 +83,7 @@ def test_real_upload_integrity_and_artifact_range_download(tmp_path) -> None:
             f"/v1/artifacts/{artifact_id}:download",
             headers=mutation_headers("real-download-ticket-0001"),
         ).json()
+        assert ticket["url"].startswith("https://automl.partner.test:8443/v1/artifact-downloads/")
         downloaded = client.get(ticket["url"], headers=ticket["required_headers"])
         assert downloaded.status_code == 200
         assert hashlib.sha256(downloaded.content).hexdigest() == ticket["sha256"]

@@ -3,7 +3,7 @@
 
 The bundle contains the API and SDK wheels, the two OpenAPI contracts, the
 container deployment files, integration documentation, and SHA-256 metadata.
-It can optionally include a Docker image exported with ``docker save``.
+It can optionally include Docker images exported with ``docker save``.
 """
 
 from __future__ import annotations
@@ -94,12 +94,8 @@ def _verify_versions(version: str) -> None:
             f'User-Agent": "automl-python-sdk/{version}"',
         ],
         ROOT / "compose.yaml": [f"AUTOML_IMAGE:-managed-automl-api:{version}"],
-        ROOT / "compose.gpu.yaml": [
-            f"AUTOML_GPU_IMAGE:-managed-automl-api:{version}-cuda"
-        ],
-        ROOT / "compose.gpu-direct.yaml": [
-            f"AUTOML_GPU_IMAGE:-managed-automl-api:{version}-cuda"
-        ],
+        ROOT / "compose.gpu.yaml": [f"AUTOML_GPU_IMAGE:-managed-automl-api:{version}-cuda"],
+        ROOT / "compose.gpu-direct.yaml": [f"AUTOML_GPU_IMAGE:-managed-automl-api:{version}-cuda"],
         ROOT / "openapi" / "automl-api.yaml": [f"  version: {version}"],
         ROOT / "openapi" / "automl-agent-tools.yaml": [f"  version: {version}"],
         ROOT / "CHANGELOG.md": [f"## {version} - "],
@@ -165,14 +161,18 @@ def _copy_inputs(bundle: Path, api_wheel: Path, sdk_wheel: Path) -> None:
         "LICENSE": "LICENSE",
         "NOTICE": "NOTICE",
         "pyproject.toml": "pyproject.toml",
+        "uv.lock": "uv.lock",
+        "requirements.production.lock": "requirements.production.lock",
         "Dockerfile": "Dockerfile",
         "compose.yaml": "compose.yaml",
         "compose.gpu.yaml": "compose.gpu.yaml",
         "compose.gpu-direct.yaml": "compose.gpu-direct.yaml",
+        "compose.production-single.yaml": "compose.production-single.yaml",
         ".dockerignore": ".dockerignore",
         ".env.example": ".env.example",
         ".env.gpu.example": ".env.gpu.example",
         ".env.production.example": ".env.production.example",
+        ".env.production-single.example": ".env.production-single.example",
         ".github/workflows/ci.yml": ".github/workflows/ci.yml",
         "docs/external-agent-integration.md": "docs/external-agent-integration.md",
         "docs/api-usage.md": "docs/api-usage.md",
@@ -180,13 +180,25 @@ def _copy_inputs(bundle: Path, api_wheel: Path, sdk_wheel: Path) -> None:
         "docs/complete-api-design.md": "docs/complete-api-design.md",
         "docs/framework-backends.md": "docs/framework-backends.md",
         "docs/production-delivery.md": "docs/production-delivery.md",
-        "docs/test-report-0.7.0.md": "docs/test-report-0.7.0.md",
+        "docs/single-node-production.md": "docs/single-node-production.md",
+        "docs/test-report-0.8.0.md": "docs/test-report-0.8.0.md",
     }
     for source_name, destination_name in files.items():
         source = ROOT / source_name
         if not source.is_file():
             raise ReleaseError(f"Required release input is missing: {source}")
         destination = bundle / destination_name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+
+    for source_name in (
+        "scripts/init_single_node_production.sh",
+        "scripts/issue_hs256_token.py",
+    ):
+        source = ROOT / source_name
+        if not source.is_file():
+            raise ReleaseError(f"Required release input is missing: {source}")
+        destination = bundle / source_name
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
 
@@ -206,30 +218,138 @@ def _copy_inputs(bundle: Path, api_wheel: Path, sdk_wheel: Path) -> None:
     shutil.copy2(sdk_wheel, wheel_dir / sdk_wheel.name)
 
 
-def _save_docker_image(bundle: Path, image: str) -> dict[str, str]:
+def _inspect_docker_image(image: str) -> dict[str, Any]:
     try:
         inspect = subprocess.run(
-            ["docker", "image", "inspect", image, "--format", "{{.Id}}"],
+            ["docker", "image", "inspect", image],
             cwd=ROOT,
             check=True,
             capture_output=True,
             text=True,
         )
-        image_id = inspect.stdout.strip()
+        parsed = json.loads(inspect.stdout)
+        metadata = parsed[0] if isinstance(parsed, list) and len(parsed) == 1 else None
     except FileNotFoundError as error:
         raise ReleaseError("--docker-image requires the docker CLI") from error
     except subprocess.CalledProcessError as error:
         raise ReleaseError(f"Docker image is not available: {image}") from error
-    if not image_id:
-        raise ReleaseError(f"Docker returned no image id for {image}")
-    safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", image)
-    destination = bundle / "images" / f"{safe_name}.tar"
+    except json.JSONDecodeError as error:
+        raise ReleaseError(f"Docker returned invalid inspection data for {image}") from error
+    if not isinstance(metadata, dict) or not metadata.get("Id"):
+        raise ReleaseError(f"Docker returned incomplete inspection data for {image}")
+    operating_system = str(metadata.get("Os", "unknown"))
+    architecture = str(metadata.get("Architecture", "unknown"))
+    variant = str(metadata.get("Variant") or "")
+    platform = f"{operating_system}/{architecture}"
+    if variant:
+        platform = f"{platform}/{variant}"
+    repo_tags = [str(value) for value in metadata.get("RepoTags") or []]
+    requested_named_reference = image.partition("@")[0]
+    separator = requested_named_reference.rfind(":")
+    requested_repository = (
+        requested_named_reference[:separator]
+        if separator > requested_named_reference.rfind("/")
+        else requested_named_reference
+    )
+    matching_tags = [
+        value for value in repo_tags if value.rsplit(":", 1)[0] == requested_repository
+    ]
+    load_reference = image if "@" not in image and not image.startswith("sha256:") else ""
+    if not load_reference:
+        load_reference = (
+            requested_named_reference
+            if requested_named_reference in matching_tags
+            else (matching_tags[0] if matching_tags else "")
+        )
+    if not load_reference:
+        raise ReleaseError(
+            f"Docker image {image} has no tagged reference that docker load can restore; "
+            "tag the inspected image before packaging"
+        )
+    return {
+        "reference": image,
+        "load_reference": load_reference,
+        "id": str(metadata["Id"]),
+        "repo_tags": repo_tags,
+        "repo_digests": [str(value) for value in metadata.get("RepoDigests") or []],
+        "os": operating_system,
+        "architecture": architecture,
+        "variant": variant or None,
+        "platform": platform,
+        "image_size_bytes": int(metadata.get("Size", 0)),
+    }
+
+
+def _normalize_platform(value: str) -> str:
+    aliases = {"aarch64": "arm64", "x86_64": "amd64"}
+    parts = [part.strip().lower() for part in value.split("/")]
+    if len(parts) not in {2, 3} or any(
+        not part or re.fullmatch(r"[a-z0-9_.-]+", part) is None for part in parts
+    ):
+        raise ReleaseError("--target-platform must use os/architecture[/variant]")
+    parts[1] = aliases.get(parts[1], parts[1])
+    return "/".join(parts)
+
+
+def _save_docker_images(
+    bundle: Path,
+    images: list[str],
+    *,
+    target_platform: str | None,
+) -> list[dict[str, Any]]:
+    if not images:
+        return []
+    if len(set(images)) != len(images):
+        raise ReleaseError("--docker-image values must not contain duplicates")
+
+    metadata = [_inspect_docker_image(image) for image in images]
+    platforms = {str(item["platform"]) for item in metadata}
+    if len(platforms) != 1:
+        rendered = ", ".join(sorted(platforms))
+        raise ReleaseError(f"Docker images target mixed platforms: {rendered}")
+    if target_platform is not None:
+        expected_platform = _normalize_platform(target_platform)
+        actual_platform = next(iter(platforms))
+        expected_has_variant = expected_platform.count("/") == 2
+        platform_matches = actual_platform == expected_platform or (
+            not expected_has_variant and actual_platform.startswith(f"{expected_platform}/")
+        )
+        if not platform_matches:
+            raise ReleaseError(
+                f"Docker image platform is {actual_platform}, not requested {expected_platform}"
+            )
+
+    load_references = [str(item["load_reference"]) for item in metadata]
+    if len(set(load_references)) != len(load_references):
+        raise ReleaseError("Docker images resolve to duplicate loadable tags")
+    destination = bundle / "images" / "docker-images.tar"
     destination.parent.mkdir(parents=True, exist_ok=True)
-    _run(["docker", "save", "--output", str(destination), image], cwd=ROOT)
-    return {"reference": image, "id": image_id, "path": destination.relative_to(bundle).as_posix()}
+    _run(
+        ["docker", "save", "--output", str(destination), *load_references],
+        cwd=ROOT,
+    )
+    if not destination.is_file():
+        raise ReleaseError("docker save did not create the requested image archive")
+    archive_path = destination.relative_to(bundle).as_posix()
+    archive_size = destination.stat().st_size
+    archive_sha256 = _sha256(destination)
+    for item in metadata:
+        item.update(
+            {
+                "path": archive_path,
+                "archive_size_bytes": archive_size,
+                "archive_sha256": archive_sha256,
+            }
+        )
+    return metadata
 
 
-def _write_metadata(bundle: Path, *, version: str, docker: dict[str, str] | None) -> None:
+def _write_metadata(
+    bundle: Path,
+    *,
+    version: str,
+    docker: list[dict[str, Any]] | None,
+) -> None:
     content_files = [
         path for path in _files(bundle) if path.name not in {"bundle-manifest.json", "SHA256SUMS"}
     ]
@@ -242,12 +362,13 @@ def _write_metadata(bundle: Path, *, version: str, docker: dict[str, str] | None
         for path in content_files
     ]
     manifest: dict[str, Any] = {
-        "schema_version": "1",
+        "schema_version": "2",
         "service_version": version,
         "api_version": "v1",
         "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
         "artifacts": entries,
-        "docker_image": docker,
+        "docker_image": docker[0] if docker and len(docker) == 1 else None,
+        "docker_images": docker or [],
     }
     manifest_path = bundle / "bundle-manifest.json"
     manifest_path.write_text(
@@ -293,7 +414,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--docker-image",
-        help="also export this local image with docker save (for example managed-automl-api:0.7.0)",
+        action="append",
+        default=[],
+        help="export a local image with docker save; repeat for API, GPU, and gateway images",
+    )
+    parser.add_argument(
+        "--target-platform",
+        help="require every exported image to match os/architecture[/variant]",
     )
     parser.add_argument(
         "--archive",
@@ -335,8 +462,12 @@ def main(argv: list[str] | None = None) -> int:
                 else _build_wheels(args.python, version, staging_root / "wheel-build")
             )
             _copy_inputs(staged_bundle, *wheel_paths)
-            docker_metadata = (
-                _save_docker_image(staged_bundle, args.docker_image) if args.docker_image else None
+            if args.target_platform and not args.docker_image:
+                raise ReleaseError("--target-platform requires at least one --docker-image")
+            docker_metadata = _save_docker_images(
+                staged_bundle,
+                args.docker_image,
+                target_platform=args.target_platform,
             )
             _write_metadata(staged_bundle, version=version, docker=docker_metadata)
             if output.exists():
