@@ -1,0 +1,27 @@
+{
+  "dataset_version_id": "dsv_REPLACE_ME",
+  "objective": {
+    "backend_id": "sklearn",
+    "target_column": null,
+    "task_type": "BINARY_CLASSIFICATION",
+    "positive_class": 1,
+    "iid_confirmed": null,
+    "primary_metric": "roc_auc",
+    "business_context": "synthetic guided example"
+  },
+  "autonomy": {
+    "mode": "GUIDED",
+    "production_deploy": "DISABLED"
+  },
+  "policy": {
+    "allow_pii": false,
+    "allow_external_llm": false,
+    "risk_tier": "STANDARD"
+  },
+  "budget": {
+    "max_trials": 2,
+    "max_compute_credits": 1,
+    "max_wall_time_seconds": 600,
+    "max_llm_tokens": 0
+  }
+}

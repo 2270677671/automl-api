@@ -10,6 +10,29 @@
 This repository provides an API-first, resumable AutoML workflow and a synchronous Python SDK. In
 the default local profile it can:
 
+## 中文文档与可运行示例
+
+| 需求 | 入口 |
+| --- | --- |
+| 从 GitHub 完整复现 | [完整复现指南](docs/reproduction-guide.md) |
+| 使用者操作说明 | [使用手册](docs/user-manual.md) |
+| 查询全部 API 路由 | [API 路由使用手册](docs/api-route-reference.md) |
+| 运行 SDK/原始 HTTP 案例 | [examples/README.md](examples/README.md) |
+| 嵌入 Agent 平台 | [外部 Agent 接入契约](docs/external-agent-integration.md) |
+| 文档总目录 | [docs/README.md](docs/README.md) |
+
+最快本地闭环：
+
+```bash
+uv sync --extra dev
+uv run automl-api
+# 另开终端
+AUTOML_API_URL=http://127.0.0.1:8000 \
+AUTOML_TOKEN=local-development-token \
+PYTHONPATH=packages/python_sdk/src \
+uv run python examples/python/sdk_guided_workflow.py
+```
+
 **Built with PriorLabs-TabPFN.** TabPFN use is subject to the Prior Labs License and the deployment
 operator's model-weight terms; see [framework backend notes](docs/framework-backends.md).
 

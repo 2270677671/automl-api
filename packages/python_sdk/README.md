@@ -8,7 +8,7 @@ Webhook endpoints/deliveries, and deletion jobs.
 
 ## Compatibility and installation
 
-SDK `0.7.x` is compatible with API `0.7.x`; the service manifest reports the
+SDK `0.8.x` is compatible with API `0.8.x`; the service manifest reports the
 machine-readable range `>=0.8,<0.9`.
 
 Install the delivered wheel:
@@ -57,3 +57,8 @@ The external Agent platform must keep the Bearer token outside the LLM prompt.
 Use `get_agent_context()` and `list_agent_actions()` to obtain the bounded tool
 surface, then invoke the canonical SDK method only after validating structured
 model output.
+
+完整可运行案例见仓库的
+[`examples/python/sdk_guided_workflow.py`](../../examples/python/sdk_guided_workflow.py)，安装、生产
+TLS/JWT 和人工 token 准备步骤见
+[`docs/reproduction-guide.md`](../../docs/reproduction-guide.md)。

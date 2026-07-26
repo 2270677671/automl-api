@@ -1,0 +1,26 @@
+{
+  "dataset_version_id": "dsv_REPLACE_ME",
+  "objective": {
+    "backend_id": "tabpfn",
+    "target_column": "target",
+    "task_type": "REGRESSION",
+    "iid_confirmed": true,
+    "primary_metric": "rmse",
+    "business_context": "synthetic TabPFN regression example"
+  },
+  "autonomy": {
+    "mode": "GUIDED",
+    "production_deploy": "DISABLED"
+  },
+  "policy": {
+    "allow_pii": false,
+    "allow_external_llm": false,
+    "risk_tier": "STANDARD"
+  },
+  "budget": {
+    "max_trials": 1,
+    "max_compute_credits": 1,
+    "max_wall_time_seconds": 1200,
+    "max_llm_tokens": 0
+  }
+}

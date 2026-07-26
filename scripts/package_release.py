@@ -2,8 +2,9 @@
 """Build a verifiable delivery bundle for an external Agent platform.
 
 The bundle contains the API and SDK wheels, the two OpenAPI contracts, the
-container deployment files, integration documentation, and SHA-256 metadata.
-It can optionally include Docker images exported with ``docker save``.
+container deployment files, integration documentation, runnable examples, and
+SHA-256 metadata. It can optionally include Docker images exported with
+``docker save``.
 """
 
 from __future__ import annotations
@@ -174,14 +175,17 @@ def _copy_inputs(bundle: Path, api_wheel: Path, sdk_wheel: Path) -> None:
         ".env.production.example": ".env.production.example",
         ".env.production-single.example": ".env.production-single.example",
         ".github/workflows/ci.yml": ".github/workflows/ci.yml",
+        "docs/README.md": "docs/README.md",
         "docs/external-agent-integration.md": "docs/external-agent-integration.md",
         "docs/api-usage.md": "docs/api-usage.md",
         "docs/api-route-reference.md": "docs/api-route-reference.md",
         "docs/complete-api-design.md": "docs/complete-api-design.md",
         "docs/framework-backends.md": "docs/framework-backends.md",
         "docs/production-delivery.md": "docs/production-delivery.md",
+        "docs/reproduction-guide.md": "docs/reproduction-guide.md",
         "docs/single-node-production.md": "docs/single-node-production.md",
         "docs/test-report-0.8.0.md": "docs/test-report-0.8.0.md",
+        "docs/user-manual.md": "docs/user-manual.md",
     }
     for source_name, destination_name in files.items():
         source = ROOT / source_name
@@ -202,7 +206,7 @@ def _copy_inputs(bundle: Path, api_wheel: Path, sdk_wheel: Path) -> None:
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
 
-    for source_name in ("apps/api/src", "openapi", "deploy"):
+    for source_name in ("apps/api/src", "openapi", "deploy", "examples"):
         source = ROOT / source_name
         if not source.is_dir():
             raise ReleaseError(f"Required release input is missing: {source}")

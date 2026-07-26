@@ -2,7 +2,7 @@
 
 ## 1. 结论
 
-0.8.0 已通过 145 项源码回归、发布门禁和最终单机生产服务器验收。当前
+0.8.0 已通过 150 项源码回归、发布门禁和最终单机生产服务器验收。当前
 `single-node-production` 可作为第三方 Agent 平台调用的独立 AutoML API 使用，覆盖 HTTPS/JWT、
 数据上传、结构化中断与人工恢复、sklearn、AutoGluon、TabPFN/CUDA、JSON/SSE 事件、结果和
 artifact 下载、审计以及在线备份。
@@ -31,8 +31,8 @@ DLP/脱敏。
 | 检查 | 结果 |
 | --- | --- |
 | `uv run ruff check .` | 通过 |
-| `uv run ruff format --check .` | 通过，61 个 Python 文件无格式偏差 |
-| `uv run pytest -q` | 145 个 case：145 通过，0 跳过，0 失败 |
+| `uv run ruff format --check .` | 通过，64 个 Python 文件无格式偏差 |
+| `uv run pytest -q` | 150 个 case：150 通过，0 跳过，0 失败 |
 | `uv lock --check` | 通过，103 个 package 解析一致 |
 | `scripts/generate_agent_openapi.py --check` | 通过，Agent OpenAPI 无漂移 |
 | `python -m automl_api.production` | 通过，5 个必选 Python 生产依赖均为 pass |
@@ -79,6 +79,7 @@ DLP/脱敏。
 | P-034 | 备份临时文件 | WAL 源库归档不残留 `-shm/-wal/.automl-before` | 通过 | 单元测试与真实新备份 |
 | P-035 | GPU 运行 | 容器能识别 RTX 4090 并执行 TabPFN 回归 | 通过 | CUDA 探针与 `run_000000000013` |
 | P-036 | 外部 LLM 边界 | manifest 不虚报生产 DLP | 通过 | `production_external_llm_safe=false` |
+| P-037 | 文档与案例 | 链接、JSON、CSV、Python 和发布包收录持续可验证 | 通过 | `tests/test_documentation_examples.py` 与 release packaging case |
 
 ## 5. 最终服务器验收
 
@@ -95,7 +96,18 @@ DLP/脱敏。
 | 在线备份 | `automl-backup-20260726T192825Z-78ca1adc` 校验通过，26 个文件，0 个 SQLite sidecar |
 | 历史兼容 | `run_000000000006` 事件 API 从 500 恢复为 200 |
 
-## 6. DLP 与责任边界
+## 6. 公开文档与案例验收
+
+| 验收项 | 实测结果 |
+| --- | --- |
+| Python SDK 案例 | sklearn Run 成功，经历 `WAITING_USER`，14 个事件，3 个 artifact 校验通过 |
+| 原始 HTTP 案例 | upload/finalize/answer/result/download 闭环成功，14 个事件，3 个 artifact 校验通过 |
+| 请求体 | sklearn、AutoGluon、TabPFN 三份 JSON 均可解析且通过基本契约断言 |
+| 样例数据 | 两份合成 CSV 列结构正确，每份 64 行数据，不含真实用户信息 |
+| 文档链接 | README、文档中心、复现指南、使用手册、案例和 SDK README 的本地链接全部可解析 |
+| 发布包 | 新文档、案例、API/SDK wheel 和 OpenAPI 均收录，`SHA256SUMS` 全部通过 |
+
+## 7. DLP 与责任边界
 
 - API 不把原始数据行嵌入 Agent context，但列名、文件名、类别值、问题和摘要仍是不可信数据派生内容。
 - 第三方 Agent 平台必须在上传前完成数据分级、PII/密钥检测、租户授权和删除/哈希化等处理。
@@ -104,7 +116,7 @@ DLP/脱敏。
 - Bearer、下载票据、artifact、原始数据行和模型访问 token 不得进入 Prompt、记忆或 trace。
 - `allow_pii=false`、`allow_external_llm=true` 都不是 DLP 已完成的证明。
 
-## 7. 已知边界
+## 8. 已知边界
 
 - 单机 profile 不是高可用；不得同时启动两个 API 实例读写同一 SQLite 和对象目录。
 - Webhook 为持久化 outbox，尚无内置 HTTP dispatcher；平台应使用事件轮询/SSE 或外部消费器。
@@ -112,9 +124,9 @@ DLP/脱敏。
 - `production_external_llm_safe=false` 保持不变，DLP 由第三方 Agent 平台实施并共同验收。
 - 集群生产仍需 PostgreSQL/RLS、S3/KMS、独立 worker、dispatcher 和高可用运维。
 
-## 8. 交付判定
+## 9. 交付判定
 
-源码、SDK、OpenAPI、生产部署文件和单机服务器均通过本轮验收。发布包
-`dist/releases/managed-automl-0.8.0-20260727-production-final` 包含双 wheel、源码、OpenAPI、Compose、
-文档、manifest 和 `SHA256SUMS`；GitHub 交付不包含 14.7 GB GPU 镜像。需要离线自托管时，应从受控
+源码、SDK、OpenAPI、生产部署文件、公开文档/案例和单机服务器均通过本轮验收。
+`scripts/package_release.py` 生成的发布包包含双 wheel、源码、OpenAPI、Compose、文档、可运行案例、
+manifest 和 `SHA256SUMS`；GitHub 交付不包含 14.7 GB GPU 镜像。需要离线自托管时，应从受控
 镜像仓库按 digest 分发，或单独用 `scripts/package_release.py --docker-image ...` 生成平台匹配的镜像包。

@@ -12,12 +12,39 @@ import scripts.package_release as release_packaging
 from scripts.package_release import (
     ReleaseError,
     _archive,
+    _copy_inputs,
     _default_archive_path,
     _normalize_platform,
     _read_version,
     _save_docker_images,
     _write_metadata,
 )
+
+
+def test_release_bundle_contains_public_documentation_and_examples(tmp_path: Path) -> None:
+    api_wheel = tmp_path / "managed_automl_skeleton-0.8.0-py3-none-any.whl"
+    sdk_wheel = tmp_path / "automl_sdk-0.8.0-py3-none-any.whl"
+    api_wheel.write_bytes(b"api")
+    sdk_wheel.write_bytes(b"sdk")
+    bundle = tmp_path / "bundle"
+
+    _copy_inputs(bundle, api_wheel, sdk_wheel)
+
+    required_paths = (
+        "docs/README.md",
+        "docs/reproduction-guide.md",
+        "docs/user-manual.md",
+        "examples/README.md",
+        "examples/python/sdk_guided_workflow.py",
+        "examples/python/http_guided_workflow.py",
+        "examples/data/customer_churn.csv",
+        "examples/data/regression.csv",
+        "examples/requests/sklearn-guided.json",
+        "examples/requests/autogluon-binary.json",
+        "examples/requests/tabpfn-regression.json",
+    )
+    for relative_path in required_paths:
+        assert (bundle / relative_path).is_file(), relative_path
 
 
 def test_release_metadata_and_archive_are_verifiable(tmp_path: Path) -> None:
