@@ -15,15 +15,17 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
 WORKDIR /build
 
-COPY requirements.production.lock ./
-RUN python -m pip wheel --wheel-dir /wheels \
+COPY pyproject.toml requirements.production.lock ./
+RUN python -c 'import tomllib; project=tomllib.load(open("pyproject.toml", "rb"))["project"]; print("\n".join((*project["dependencies"], *project["optional-dependencies"]["all-backends"])))' \
+    > /tmp/requirements.production.direct \
+    && python -m pip wheel --wheel-dir /wheels \
     --constraint requirements.production.lock \
     --find-links "${TORCH_FIND_LINKS}" \
     ${PIP_TRUSTED_HOST:+--trusted-host "${PIP_TRUSTED_HOST}"} \
     "torch==${TORCH_VERSION}" \
-    --requirement requirements.production.lock
+    --requirement /tmp/requirements.production.direct
 
-COPY pyproject.toml README.md LICENSE NOTICE CHANGELOG.md ./
+COPY README.md LICENSE NOTICE CHANGELOG.md ./
 COPY apps/api/src ./apps/api/src
 COPY openapi ./openapi
 RUN python -m pip wheel --wheel-dir /wheels --no-deps .

@@ -310,11 +310,15 @@ def test_cli_disables_raw_access_logs_and_configures_the_trusted_proxy(
 def test_gateway_redacts_download_ticket_uris_and_defines_the_proxy_boundary() -> None:
     caddyfile = (_ROOT / "deploy" / "single-node" / "Caddyfile").read_text(encoding="utf-8")
     compose = (_ROOT / "compose.production-single.yaml").read_text(encoding="utf-8")
+    dockerfile = (_ROOT / "Dockerfile").read_text(encoding="utf-8")
 
     assert "log_skip @download_ticket" in caddyfile
     assert "request>uri delete" in caddyfile
     assert 'AUTOML_FORWARDED_ALLOW_IPS: "*"' in compose
     assert "header_up X-Forwarded-Proto https" in caddyfile
+    assert 'project["dependencies"]' in dockerfile
+    assert "--constraint requirements.production.lock" in dockerfile
+    assert "--requirement requirements.production.lock" not in dockerfile
 
 
 def test_public_base_url_controls_upload_urls(
