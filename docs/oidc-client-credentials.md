@@ -39,6 +39,7 @@ AUTOML_OIDC_HTTPS_PORT=9443
 AUTOML_OIDC_REALM=automl
 AUTOML_OIDC_AGENT_CLIENT_ID=automl-agent-platform
 AUTOML_OIDC_AGENT_TENANT_ID=partner_a
+AUTOML_GATEWAY_GOMAXPROCS=2
 ```
 
 以下值必须由初始化脚本生成并保持非空，不能提交到 Git：
@@ -64,6 +65,9 @@ AUTOML_OIDC_DB_PASSWORD
 如果环境文件已包含任何 `AUTOML_OIDC_*` 配置，脚本会拒绝修改，避免误轮换正在使用的
 client secret 或身份数据库凭据。
 
+`AUTOML_GATEWAY_GOMAXPROCS` 应与 Caddy 的 CPU 限额匹配。默认值 `2` 会限制长期运行时的
+Go worker 线程数量，避免网关耗尽 `AUTOML_GATEWAY_PIDS_LIMIT` 后无法执行健康检查。
+
 启动 CPU 单节点：
 
 ```bash
@@ -71,6 +75,16 @@ docker compose --env-file .env.production-single \
   -f compose.production-single.yaml \
   -f compose.oidc.yaml \
   up -d --wait
+```
+
+Keycloak 和 PostgreSQL 均通过预构建的本地标签运行；对应 Dockerfile 的 `FROM` 使用国内代理并
+固定 digest。如果 Docker daemon 的直接 pull 不稳定，可先显式通过 BuildKit 构建两个本地镜像：
+
+```bash
+docker compose --env-file .env.production-single \
+  -f compose.production-single.yaml \
+  -f compose.oidc.yaml \
+  build automl-identity-db automl-identity
 ```
 
 GPU、双 IP 部署追加现有 overlay：

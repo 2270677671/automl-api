@@ -311,6 +311,8 @@ def test_gateway_redacts_download_ticket_uris_and_defines_the_proxy_boundary() -
     caddyfile = (_ROOT / "deploy" / "single-node" / "Caddyfile").read_text(encoding="utf-8")
     compose = (_ROOT / "compose.production-single.yaml").read_text(encoding="utf-8")
     dual_compose = (_ROOT / "compose.dual-ip.yaml").read_text(encoding="utf-8")
+    assert 'GOMAXPROCS: "${AUTOML_GATEWAY_GOMAXPROCS:-2}"' in compose
+    assert 'GOMAXPROCS: "${AUTOML_GATEWAY_GOMAXPROCS:-2}"' in dual_compose
     dockerfile = (_ROOT / "Dockerfile").read_text(encoding="utf-8")
 
     assert "log_skip @download_ticket" in caddyfile

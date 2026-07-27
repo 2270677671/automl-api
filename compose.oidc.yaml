@@ -18,7 +18,7 @@ services:
     networks: [backend, identity]
 
   automl-identity-db-init:
-    image: "${AUTOML_POSTGRES_IMAGE:-docker.m.daocloud.io/library/postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193}"
+    image: "${AUTOML_POSTGRES_IMAGE:-managed-automl-postgres:17-alpine}"
     user: "0:0"
     entrypoint: ["/bin/sh", "-ec"]
     command:
@@ -36,7 +36,12 @@ services:
     restart: "no"
 
   automl-identity-db:
-    image: "${AUTOML_POSTGRES_IMAGE:-docker.m.daocloud.io/library/postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193}"
+    build:
+      context: .
+      dockerfile: deploy/identity/Postgres.Dockerfile
+      args:
+        POSTGRES_BASE_IMAGE: "${AUTOML_POSTGRES_BASE_IMAGE:-docker.1panel.live/library/postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193}"
+    image: "${AUTOML_POSTGRES_IMAGE:-managed-automl-postgres:17-alpine}"
     user: "70:70"
     restart: unless-stopped
     depends_on:
@@ -154,6 +159,7 @@ services:
       AUTOML_OIDC_HTTPS_PORT: "${AUTOML_OIDC_HTTPS_PORT:-9443}"
       AUTOML_OIDC_PUBLIC_HOST: "${AUTOML_OIDC_PUBLIC_HOST:?set AUTOML_OIDC_PUBLIC_HOST}"
       AUTOML_OIDC_REALM: "${AUTOML_OIDC_REALM:-automl}"
+      GOMAXPROCS: "${AUTOML_GATEWAY_GOMAXPROCS:-2}"
     volumes:
       - type: bind
         source: ./deploy/identity/Caddyfile
@@ -193,7 +199,7 @@ services:
       retries: 5
 
   automl-identity-backup:
-    image: "${AUTOML_POSTGRES_IMAGE:-docker.m.daocloud.io/library/postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193}"
+    image: "${AUTOML_POSTGRES_IMAGE:-managed-automl-postgres:17-alpine}"
     user: "10001:10001"
     restart: unless-stopped
     depends_on:

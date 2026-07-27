@@ -216,6 +216,7 @@ services:
     environment:
       AUTOML_GATEWAY_MAX_BODY_BYTES: "${AUTOML_GATEWAY_MAX_BODY_BYTES:-115343360}"
       AUTOML_PUBLIC_HOST: "${AUTOML_PUBLIC_HOST:?set AUTOML_PUBLIC_HOST}"
+      GOMAXPROCS: "${AUTOML_GATEWAY_GOMAXPROCS:-2}"
     volumes:
       - type: bind
         source: ./deploy/single-node/Caddyfile

@@ -68,6 +68,13 @@ def test_oidc_compose_uses_internal_jwks_and_does_not_publish_databases() -> Non
     assert "RUN /opt/keycloak/bin/kc.sh build" in identity_dockerfile
     assert "COPY --from=builder /opt/keycloak/ /opt/keycloak/" in identity_dockerfile
     assert "quay.nju.edu.cn/keycloak/keycloak:26.3.3@sha256:" in identity_dockerfile
+    postgres_dockerfile = (ROOT / "deploy" / "identity" / "Postgres.Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    assert "docker.1panel.live/library/postgres:17-alpine@sha256:" in postgres_dockerfile
+    assert "POSTGRES_BASE_IMAGE:" in compose
+    assert 'image: "${AUTOML_POSTGRES_IMAGE:-managed-automl-postgres:17-alpine}"' in compose
+    assert 'GOMAXPROCS: "${AUTOML_GATEWAY_GOMAXPROCS:-2}"' in compose
     assert "pg_dump" in compose
 
 

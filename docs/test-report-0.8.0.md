@@ -97,14 +97,17 @@ DLP/脱敏。
 | Claims | `aud=managed-automl-api`、`tenant_id=partner_a`、`actor_type=agent` |
 | 权限 | 23 个 Agent operation scopes，不包含 `decideApproval` |
 | API 联调 | 无 token 访问 manifest=401，SDK 自动取 token 后 manifest=200 |
+| 双入口联调 | 同一个 access token 调用两个 AutoML API IP，manifest 均为 200 |
 | 验签配置 | API 仅配置内网 JWKS URL，`AUTOML_JWT_SECRET` 和 `AUTOML_JWKS_JSON` 均为空 |
 | 对外边界 | identity gateway 只发布 discovery/token/JWKS，`/admin/` 返回 404 |
+| 身份备份 | 首份 PostgreSQL `pg_dump` gzip 归档非空且通过 `gzip -t` |
+| 网关资源 | 三个 Caddy 网关设置 `GOMAXPROCS=2`；各完成 200 次顺序请求后为 30 PID，保持 healthy |
 
 ## 6. 最终服务器验收
 
 | 验收项 | 实测结果 |
 | --- | --- |
-| 最终镜像切换 | API 运行 `8a8cb070…`，API 与 gateway healthy |
+| 最终镜像切换 | API 运行 `8a8cb070…`，API、双 IP gateway 与 identity gateway healthy |
 | HTTPS | `/healthz=200`，安全响应头存在 |
 | 双 IP HTTPS | `192.168.194.67:8443` 和 `192.168.77.32:8443` 分别由独立网关精确绑定，CA/IP SAN 校验通过 |
 | 双 IP 数据面 | 两个入口创建 upload session 均返回同 Origin URL，测试数据已删除 |
