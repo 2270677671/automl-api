@@ -317,6 +317,8 @@ def test_gateway_redacts_download_ticket_uris_and_defines_the_proxy_boundary() -
 
     assert "log_skip @download_ticket" in caddyfile
     assert "request>uri delete" in caddyfile
+    assert "http://127.0.0.1:8081" in caddyfile
+    assert "respond /healthz 200" in caddyfile
     assert "@compressible not path /v1/artifact-downloads/*" in caddyfile
     assert "encode @compressible zstd gzip" in caddyfile
     assert "default_sni {$AUTOML_PUBLIC_HOST}" in caddyfile
@@ -324,7 +326,7 @@ def test_gateway_redacts_download_ticket_uris_and_defines_the_proxy_boundary() -
     assert ":8443 {\n\trespond 421\n}" in caddyfile
     assert 'AUTOML_FORWARDED_ALLOW_IPS: "*"' in compose
     assert "cap_add: [DAC_OVERRIDE, NET_BIND_SERVICE]" in compose
-    assert "https://$$AUTOML_PUBLIC_HOST:8443/healthz" in compose
+    assert 'test: [CMD, wget, -qO-, "http://127.0.0.1:8081/healthz"]' in compose
     assert "healthcheck:\n      disable: true" in compose
     assert "header_up X-Forwarded-Proto https" in caddyfile
     assert "AUTOML_PUBLIC_BASE_URLS" in dual_compose

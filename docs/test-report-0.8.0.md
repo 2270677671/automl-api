@@ -101,7 +101,7 @@ DLP/脱敏。
 | 验签配置 | API 仅配置内网 JWKS URL，`AUTOML_JWT_SECRET` 和 `AUTOML_JWKS_JSON` 均为空 |
 | 对外边界 | identity gateway 只发布 discovery/token/JWKS，`/admin/` 返回 404 |
 | 身份备份 | 首份 PostgreSQL `pg_dump` gzip 归档非空且通过 `gzip -t` |
-| 网关资源 | 三个 Caddy 网关设置 `GOMAXPROCS=2`；各完成 200 次顺序请求后为 30 PID，保持 healthy |
+| 网关资源 | `GOMAXPROCS=2` + 回环 HTTP 探针；75 秒 6 次采样保持 7–8 PID，cgroup 与真实线程一致 |
 
 ## 6. 最终服务器验收
 

@@ -87,6 +87,11 @@ def test_identity_gateway_exposes_only_discovery_keys_and_token_endpoint() -> No
     assert "handle {\n\t\trespond 404\n\t}" in caddyfile
     assert "request>uri delete" in caddyfile
     assert "max_size 65536" in caddyfile
+    assert "http://127.0.0.1:8081" in caddyfile
+    assert "respond /healthz 200" in caddyfile
+    assert 'test: [CMD, wget, -qO-, "http://127.0.0.1:8081/healthz"]' in (
+        ROOT / "compose.oidc.yaml"
+    ).read_text(encoding="utf-8")
 
 
 def test_production_initializer_generates_oidc_secrets_without_fixed_values() -> None:
