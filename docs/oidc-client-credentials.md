@@ -49,6 +49,21 @@ AUTOML_OIDC_ADMIN_PASSWORD
 AUTOML_OIDC_DB_PASSWORD
 ```
 
+已经在运行、环境文件中尚无 `AUTOML_OIDC_*` 的单机部署，使用原地迁移脚本；它会
+原子更新环境文件、保持 `0600`、生成三个独立凭据，且不输出凭据值：
+
+```bash
+./scripts/enable_oidc_single_node.sh \
+  .env.production-single \
+  .automl-production \
+  192.168.194.67 \
+  192.168.194.67 \
+  partner_a
+```
+
+如果环境文件已包含任何 `AUTOML_OIDC_*` 配置，脚本会拒绝修改，避免误轮换正在使用的
+client secret 或身份数据库凭据。
+
 启动 CPU 单节点：
 
 ```bash

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import stat
+import subprocess
 
 from automl_api.operations import CANONICAL_OPERATION_IDS
 
@@ -91,3 +93,59 @@ def test_production_initializer_generates_oidc_secrets_without_fixed_values() ->
         assert f"{name}=\n" in template
         assert f"s|^{name}=.*|{name}=$" in initializer
     assert '"$data_root/identity-db"' in initializer
+
+
+def test_existing_production_environment_can_be_migrated_without_printing_secrets(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / ".env.production-single"
+    data_root = tmp_path / "production-data"
+    env_file.write_text(
+        "AUTOML_PUBLIC_HOST=192.0.2.10\n"
+        "AUTOML_HTTPS_BIND_ADDRESS=192.0.2.10\n"
+        f"AUTOML_STATE_HOST_DIR={data_root}/state\n",
+        encoding="utf-8",
+    )
+    env_file.chmod(0o600)
+
+    result = subprocess.run(
+        [
+            "sh",
+            str(ROOT / "scripts" / "enable_oidc_single_node.sh"),
+            str(env_file),
+            str(data_root),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    settings = dict(
+        line.split("=", 1)
+        for line in env_file.read_text(encoding="utf-8").splitlines()
+        if line and not line.startswith("#")
+    )
+    secrets = {
+        settings["AUTOML_OIDC_AGENT_CLIENT_SECRET"],
+        settings["AUTOML_OIDC_ADMIN_PASSWORD"],
+        settings["AUTOML_OIDC_DB_PASSWORD"],
+    }
+    assert len(secrets) == 3
+    assert all(len(value) >= 64 for value in secrets)
+    assert all(value not in result.stdout for value in secrets)
+    assert settings["AUTOML_OIDC_PUBLIC_HOST"] == "192.0.2.10"
+    assert settings["AUTOML_OIDC_AGENT_TENANT_ID"] == "partner_a"
+    assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
+    assert stat.S_IMODE((data_root / "identity-db").stat().st_mode) == 0o700
+
+    repeated = subprocess.run(
+        [
+            "sh",
+            str(ROOT / "scripts" / "enable_oidc_single_node.sh"),
+            str(env_file),
+            str(data_root),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert repeated.returncode != 0
+    assert "already contains OIDC settings" in repeated.stderr

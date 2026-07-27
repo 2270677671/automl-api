@@ -200,6 +200,7 @@ def _copy_inputs(bundle: Path, api_wheel: Path, sdk_wheel: Path) -> None:
         shutil.copy2(source, destination)
 
     for source_name in (
+        "scripts/enable_oidc_single_node.sh",
         "scripts/init_single_node_production.sh",
         "scripts/issue_hs256_token.py",
         "scripts/verify_oidc_deployment.py",

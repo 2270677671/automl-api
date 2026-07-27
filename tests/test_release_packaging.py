@@ -37,6 +37,7 @@ def test_release_bundle_contains_public_documentation_and_examples(tmp_path: Pat
         "docs/user-manual.md",
         "compose.dual-ip.yaml",
         "compose.oidc.yaml",
+        "scripts/enable_oidc_single_node.sh",
         "scripts/verify_oidc_deployment.py",
         "docs/oidc-client-credentials.md",
         "examples/README.md",

@@ -2,7 +2,7 @@
 
 ## 1. 结论
 
-0.8.0 已通过 167 项源码回归、发布门禁和最终单机生产服务器验收。当前
+0.8.0 已通过 168 项源码回归、发布门禁和最终单机生产服务器验收。当前
 `single-node-production` 可作为第三方 Agent 平台调用的独立 AutoML API 使用，覆盖 HTTPS/JWT、
 数据上传、结构化中断与人工恢复、sklearn、AutoGluon、TabPFN/CUDA、JSON/SSE 事件、结果和
 artifact 下载、审计以及在线备份。
@@ -33,7 +33,7 @@ DLP/脱敏。
 | --- | --- |
 | `uv run ruff check .` | 通过 |
 | `uv run ruff format --check .` | 通过，70 个 Python 文件无格式偏差 |
-| `uv run pytest -q` | 167 个 case：167 通过，0 跳过，0 失败 |
+| `uv run pytest -q` | 168 个 case：168 通过，0 跳过，0 失败 |
 | `uv lock --check` | 通过，103 个 package 解析一致 |
 | `scripts/generate_agent_openapi.py --check` | 通过，Agent OpenAPI 无漂移 |
 | `python -m automl_api.production` | 通过，5 个必选 Python 生产依赖均为 pass |
