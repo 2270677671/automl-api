@@ -1,0 +1,252 @@
+services:
+  automl-api:
+    depends_on:
+      automl-init:
+        condition: service_completed_successfully
+      automl-identity:
+        condition: service_healthy
+    environment:
+      AUTOML_JWKS_JSON: ""
+      AUTOML_JWKS_URL: >-
+        http://automl-identity:8080/realms/${AUTOML_OIDC_REALM:-automl}/protocol/openid-connect/certs
+      AUTOML_JWT_ALGORITHMS: "RS256"
+      AUTOML_JWT_AUDIENCE: "${AUTOML_JWT_AUDIENCE:-managed-automl-api}"
+      AUTOML_JWT_ISSUER: >-
+        https://${AUTOML_OIDC_PUBLIC_HOST:?set AUTOML_OIDC_PUBLIC_HOST}:${AUTOML_OIDC_HTTPS_PORT:-9443}/realms/${AUTOML_OIDC_REALM:-automl}
+      AUTOML_JWT_KEYS: ""
+      AUTOML_JWT_SECRET: ""
+    networks: [backend, identity]
+
+  automl-identity-db-init:
+    image: "${AUTOML_POSTGRES_IMAGE:-docker.m.daocloud.io/library/postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193}"
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        chown -R 70:70 /var/lib/postgresql/data
+        chmod 0700 /var/lib/postgresql/data
+    volumes:
+      - type: bind
+        source: "${AUTOML_OIDC_DB_HOST_DIR:-./.automl-production/identity-db}"
+        target: /var/lib/postgresql/data
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+
+  automl-identity-db:
+    image: "${AUTOML_POSTGRES_IMAGE:-docker.m.daocloud.io/library/postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193}"
+    user: "70:70"
+    restart: unless-stopped
+    depends_on:
+      automl-identity-db-init:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_DB: "${AUTOML_OIDC_DB_NAME:-keycloak}"
+      POSTGRES_PASSWORD: "${AUTOML_OIDC_DB_PASSWORD:?set AUTOML_OIDC_DB_PASSWORD}"
+      POSTGRES_USER: "${AUTOML_OIDC_DB_USER:-keycloak}"
+    volumes:
+      - type: bind
+        source: "${AUTOML_OIDC_DB_HOST_DIR:-./.automl-production/identity-db}"
+        target: /var/lib/postgresql/data
+    networks: [identity]
+    read_only: true
+    tmpfs:
+      - /run/postgresql:rw,noexec,nosuid,size=16m,mode=0775,uid=70,gid=70
+      - /tmp:rw,noexec,nosuid,size=32m,mode=0700,uid=70,gid=70
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: "${AUTOML_OIDC_DB_PIDS_LIMIT:-256}"
+    cpus: "${AUTOML_OIDC_DB_CPU_LIMIT:-1.0}"
+    mem_limit: "${AUTOML_OIDC_DB_MEMORY_LIMIT:-1g}"
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 12
+
+  automl-identity:
+    build:
+      context: .
+      dockerfile: deploy/identity/Dockerfile
+      args:
+        KEYCLOAK_BASE_IMAGE: "${AUTOML_KEYCLOAK_BASE_IMAGE:-quay.nju.edu.cn/keycloak/keycloak:26.3.3@sha256:6a7217a100bd3e5de4063a27a538ef999a3c5a88c4b4ec0ffc0a642aee7b2597}"
+    image: "${AUTOML_KEYCLOAK_IMAGE:-managed-automl-identity:26.3.3}"
+    restart: unless-stopped
+    depends_on:
+      automl-identity-db:
+        condition: service_healthy
+    command: ["start", "--optimized", "--import-realm"]
+    environment:
+      AUTOML_OIDC_AGENT_CLIENT_ID: "${AUTOML_OIDC_AGENT_CLIENT_ID:-automl-agent-platform}"
+      AUTOML_OIDC_AGENT_CLIENT_SECRET: "${AUTOML_OIDC_AGENT_CLIENT_SECRET:?set AUTOML_OIDC_AGENT_CLIENT_SECRET}"
+      AUTOML_OIDC_AGENT_TENANT_ID: "${AUTOML_OIDC_AGENT_TENANT_ID:?set AUTOML_OIDC_AGENT_TENANT_ID}"
+      KC_BOOTSTRAP_ADMIN_PASSWORD: "${AUTOML_OIDC_ADMIN_PASSWORD:?set AUTOML_OIDC_ADMIN_PASSWORD}"
+      KC_BOOTSTRAP_ADMIN_USERNAME: "${AUTOML_OIDC_ADMIN_USERNAME:-automl-admin}"
+      KC_DB: postgres
+      KC_DB_PASSWORD: "${AUTOML_OIDC_DB_PASSWORD:?set AUTOML_OIDC_DB_PASSWORD}"
+      KC_DB_SCHEMA: public
+      KC_DB_URL_DATABASE: "${AUTOML_OIDC_DB_NAME:-keycloak}"
+      KC_DB_URL_HOST: automl-identity-db
+      KC_DB_URL_PORT: "5432"
+      KC_DB_USERNAME: "${AUTOML_OIDC_DB_USER:-keycloak}"
+      KC_HEALTH_ENABLED: "true"
+      KC_HOSTNAME: >-
+        https://${AUTOML_OIDC_PUBLIC_HOST:?set AUTOML_OIDC_PUBLIC_HOST}:${AUTOML_OIDC_HTTPS_PORT:-9443}
+      KC_HOSTNAME_STRICT: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_HTTP_MANAGEMENT_PORT: "9000"
+      KC_HTTP_PORT: "8080"
+      KC_LOG_LEVEL: "${AUTOML_OIDC_LOG_LEVEL:-info}"
+      KC_METRICS_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+    expose: ["8080", "9000"]
+    volumes:
+      - type: bind
+        source: ./deploy/identity/automl-realm.json
+        target: /opt/keycloak/data/import/automl-realm.json
+        read_only: true
+    networks: [identity]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m,mode=0700,uid=1000,gid=0
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: "${AUTOML_OIDC_PIDS_LIMIT:-512}"
+    cpus: "${AUTOML_OIDC_CPU_LIMIT:-2.0}"
+    mem_limit: "${AUTOML_OIDC_MEMORY_LIMIT:-2g}"
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q 'HTTP/1.1 200' <&3
+      interval: 15s
+      timeout: 8s
+      start_period: 90s
+      retries: 12
+
+  automl-identity-gateway:
+    image: "${AUTOML_CADDY_IMAGE:-docker.m.daocloud.io/library/caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d}"
+    restart: unless-stopped
+    depends_on:
+      automl-identity:
+        condition: service_healthy
+    ports:
+      - "${AUTOML_OIDC_HTTPS_BIND_ADDRESS:?set AUTOML_OIDC_HTTPS_BIND_ADDRESS}:${AUTOML_OIDC_HTTPS_PORT:-9443}:9443"
+    environment:
+      AUTOML_OIDC_HTTPS_PORT: "${AUTOML_OIDC_HTTPS_PORT:-9443}"
+      AUTOML_OIDC_PUBLIC_HOST: "${AUTOML_OIDC_PUBLIC_HOST:?set AUTOML_OIDC_PUBLIC_HOST}"
+      AUTOML_OIDC_REALM: "${AUTOML_OIDC_REALM:-automl}"
+    volumes:
+      - type: bind
+        source: ./deploy/identity/Caddyfile
+        target: /etc/caddy/Caddyfile
+        read_only: true
+      - type: bind
+        source: "${AUTOML_CADDY_DATA_HOST_DIR:-./.automl-production/caddy-data}"
+        target: /data
+      - type: bind
+        source: "${AUTOML_CADDY_CONFIG_HOST_DIR:-./.automl-production/caddy-config}"
+        target: /config
+    networks: [frontend, identity]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop: [ALL]
+    cap_add: [DAC_OVERRIDE, NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    pids_limit: "${AUTOML_GATEWAY_PIDS_LIMIT:-512}"
+    cpus: "${AUTOML_GATEWAY_CPU_LIMIT:-1.0}"
+    mem_limit: "${AUTOML_GATEWAY_MEMORY_LIMIT:-256m}"
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          wget --no-check-certificate -qO-
+          "https://$$AUTOML_OIDC_PUBLIC_HOST:9443/realms/$$AUTOML_OIDC_REALM/.well-known/openid-configuration"
+          >/dev/null
+      interval: 30s
+      timeout: 8s
+      start_period: 30s
+      retries: 5
+
+  automl-identity-backup:
+    image: "${AUTOML_POSTGRES_IMAGE:-docker.m.daocloud.io/library/postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193}"
+    user: "10001:10001"
+    restart: unless-stopped
+    depends_on:
+      automl-identity-db:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        umask 077
+        mkdir -p /var/backups/automl/identity
+        while :; do
+          stamp=$$(date -u +%Y%m%dT%H%M%SZ)
+          target="/var/backups/automl/identity/keycloak-$$stamp.sql.gz"
+          if pg_dump --host=automl-identity-db --username="$$PGUSER" --dbname="$$PGDATABASE" \
+            --no-owner --no-privileges | gzip -9 >"$$target.tmp"; then
+            mv "$$target.tmp" "$$target"
+            find /var/backups/automl/identity -type f -name 'keycloak-*.sql.gz' \
+              -mtime "+$$AUTOML_OIDC_BACKUP_RETENTION_DAYS" -delete
+            sleep "$$AUTOML_BACKUP_INTERVAL_SECONDS"
+          else
+            rm -f "$$target.tmp"
+            sleep "$$AUTOML_BACKUP_RETRY_SECONDS"
+          fi
+        done
+    environment:
+      AUTOML_BACKUP_INTERVAL_SECONDS: "${AUTOML_BACKUP_INTERVAL_SECONDS:-86400}"
+      AUTOML_BACKUP_RETRY_SECONDS: "${AUTOML_BACKUP_RETRY_SECONDS:-300}"
+      AUTOML_OIDC_BACKUP_RETENTION_DAYS: "${AUTOML_OIDC_BACKUP_RETENTION_DAYS:-14}"
+      HOME: /tmp
+      PGDATABASE: "${AUTOML_OIDC_DB_NAME:-keycloak}"
+      PGPASSWORD: "${AUTOML_OIDC_DB_PASSWORD:?set AUTOML_OIDC_DB_PASSWORD}"
+      PGUSER: "${AUTOML_OIDC_DB_USER:-keycloak}"
+    volumes:
+      - type: bind
+        source: "${AUTOML_BACKUP_HOST_DIR:-./.automl-production/backups}"
+        target: /var/backups/automl
+    networks: [identity]
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m,mode=0700,uid=10001,gid=10001
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    cpus: "${AUTOML_BACKUP_CPU_LIMIT:-1.0}"
+    mem_limit: "${AUTOML_BACKUP_MEMORY_LIMIT:-512m}"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      disable: true
+
+networks:
+  identity:
+    internal: true

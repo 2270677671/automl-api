@@ -17,6 +17,41 @@ Install the delivered wheel:
 python -m pip install automl_sdk-0.8.0-py3-none-any.whl
 ```
 
+## OAuth2 client credentials
+
+Production Agent platforms should use the built-in token provider instead of storing a manually
+issued access token:
+
+```python
+import os
+import ssl
+
+import httpx
+
+from automl_sdk import AutoMLClient, OAuth2ClientCredentialsTokenProvider
+
+tls = ssl.create_default_context(cafile=os.environ["AUTOML_CA_FILE"])
+
+with (
+    OAuth2ClientCredentialsTokenProvider(
+        os.environ["AUTOML_OIDC_TOKEN_URL"],
+        client_id=os.environ["AUTOML_OIDC_CLIENT_ID"],
+        client_secret=lambda: os.environ["AUTOML_OIDC_CLIENT_SECRET"],
+        verify=tls,
+    ) as tokens,
+    httpx.Client(verify=tls, timeout=30) as http,
+    AutoMLClient(
+        os.environ["AUTOML_API_URL"],
+        token=tokens,
+        http_client=http,
+    ) as api,
+):
+    print(api.get_agent_manifest()["service_version"])
+```
+
+The provider caches the Bearer token in memory and obtains a new token before expiration. Keep the
+client secret in the Agent platform's secret manager, never in model context or source code.
+
 ## Minimal workflow
 
 ```python

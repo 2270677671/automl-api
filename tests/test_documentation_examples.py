@@ -66,6 +66,7 @@ def test_documentation_local_links_resolve() -> None:
         ROOT / "README.md",
         ROOT / "docs" / "README.md",
         ROOT / "docs" / "api-user-guide-with-examples.md",
+        ROOT / "docs" / "oidc-client-credentials.md",
         ROOT / "docs" / "reproduction-guide.md",
         ROOT / "docs" / "user-manual.md",
         EXAMPLES / "README.md",

@@ -198,7 +198,8 @@ manifest 的 `production_external_llm_safe=false` 视为硬边界，不得向客
 
 ## 生产前门禁
 
-1. 从 preview HS256 JWT verifier 升级到正式 OIDC/JWKS 或 workload identity。
+1. 单节点部署启用 `compose.oidc.yaml`，Agent 平台通过 OAuth2 `client_credentials` 自动获取短期
+   token；企业部署可改接组织 OIDC/JWKS 或 workload identity。
 2. 上传前入站 DLP，以及 Agent context 出站 DLP、opaque column ID、字段 allowlist 和租户同意审计。
 3. Prompt-injection 回归集，覆盖文件名、列名、类别值、问题文本和 artifact 摘要。
 4. 平台侧结构化输出校验、操作 allowlist、预算限制、审计和 kill switch。

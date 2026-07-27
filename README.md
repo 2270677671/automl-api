@@ -20,6 +20,7 @@ the default local profile it can:
 | 查询全部 API 路由 | [API 路由使用手册](docs/api-route-reference.md) |
 | 运行 SDK/原始 HTTP 案例 | [examples/README.md](examples/README.md) |
 | 嵌入 Agent 平台 | [外部 Agent 接入契约](docs/external-agent-integration.md) |
+| 自动获取生产 access token | [OIDC/OAuth2 Client Credentials](docs/oidc-client-credentials.md) |
 | 文档总目录 | [docs/README.md](docs/README.md) |
 
 最快本地闭环：

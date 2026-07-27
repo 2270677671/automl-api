@@ -2,7 +2,7 @@
 
 ## 1. 结论
 
-0.8.0 已通过 152 项源码回归、发布门禁和最终单机生产服务器验收。当前
+0.8.0 已通过 167 项源码回归、发布门禁和最终单机生产服务器验收。当前
 `single-node-production` 可作为第三方 Agent 平台调用的独立 AutoML API 使用，覆盖 HTTPS/JWT、
 数据上传、结构化中断与人工恢复、sklearn、AutoGluon、TabPFN/CUDA、JSON/SSE 事件、结果和
 artifact 下载、审计以及在线备份。
@@ -20,19 +20,20 @@ DLP/脱敏。
 | 本地 Python | 3.12.7 |
 | API 主要依赖 | FastAPI 0.140.0、Pydantic 2.13.4、scikit-learn 1.7.2 |
 | 可选后端 | AutoGluon Tabular 1.5.0、TabPFN 8.1.0 |
+| 身份服务实测 | Keycloak 26.3.3、PostgreSQL 17、Caddy 2.10.2 |
 | GPU runtime | Torch 2.13.0+cu130、NVIDIA GeForce RTX 4090 |
 | 最终 GPU 镜像 | `sha256:8a8cb0707f800d81e2ca486653977d90dc997d227114a780e3bc7fa73d281a38` |
 | 回滚镜像 | `sha256:b47aeccb6a8a65ea165e1d27a9f783b50690421d456a585eb19b3beb0c28b82c` |
 | 生产锁定 | `uv.lock`、`requirements.production.lock` |
-| 生产部署文件 | `compose.production-single.yaml`、`compose.dual-ip.yaml`、`compose.gpu-direct.yaml`、`deploy/single-node/Caddyfile` |
+| 生产部署文件 | `compose.production-single.yaml`、`compose.oidc.yaml`、`compose.dual-ip.yaml`、`compose.gpu-direct.yaml`、`deploy/single-node/Caddyfile`、`deploy/identity/*` |
 
 ## 3. 自动化门禁
 
 | 检查 | 结果 |
 | --- | --- |
 | `uv run ruff check .` | 通过 |
-| `uv run ruff format --check .` | 通过，64 个 Python 文件无格式偏差 |
-| `uv run pytest -q` | 152 个 case：152 通过，0 跳过，0 失败 |
+| `uv run ruff format --check .` | 通过，70 个 Python 文件无格式偏差 |
+| `uv run pytest -q` | 167 个 case：167 通过，0 跳过，0 失败 |
 | `uv lock --check` | 通过，103 个 package 解析一致 |
 | `scripts/generate_agent_openapi.py --check` | 通过，Agent OpenAPI 无漂移 |
 | `python -m automl_api.production` | 通过，5 个必选 Python 生产依赖均为 pass |
@@ -81,8 +82,25 @@ DLP/脱敏。
 | P-036 | 外部 LLM 边界 | manifest 不虚报生产 DLP | 通过 | `production_external_llm_safe=false` |
 | P-037 | 文档与案例 | 链接、JSON、CSV、Python 和发布包收录持续可验证 | 通过 | `tests/test_documentation_examples.py` 与 release packaging case |
 | P-038 | 双 IP 生产入口 | 两个精确绑定各自通过 TLS，数据面 URL 保持请求 Origin | 通过 | multi-origin 回归与真实服务器验收 |
+| P-039 | OAuth2 自动取 token | Keycloak `client_credentials` 签发五分钟 RS256 JWT，API 通过 JWKS 验签 | 通过 | 真实容器栈与 `scripts/verify_oidc_deployment.py` |
+| P-040 | 身份隔离 | 错误 secret 返回 401，admin/DB/management 不对外发布 | 通过 | Keycloak 26 返回 `401 unauthorized_client`，外部 `/admin/=404` |
+| P-041 | Agent 权限边界 | JWT 携带 tenant/agent/operation scopes，不授予 `decideApproval` | 通过 | 23 个精确 operation scopes，JWKS 实际验签通过 |
 
-## 5. 最终服务器验收
+## 5. OIDC 真实容器验收
+
+| 验收项 | 实测结果 |
+| --- | --- |
+| 身份栈健康 | PostgreSQL、Keycloak、HTTPS identity gateway 全部 healthy |
+| Discovery | issuer/token endpoint/JWKS 均为配置的 HTTPS 主入口 |
+| 错误凭据 | HTTP 401，OAuth error=`unauthorized_client`，不泄露 secret |
+| 正确凭据 | Bearer JWT，`exp-iat=300` 秒，RS256 `kid` 存在 |
+| Claims | `aud=managed-automl-api`、`tenant_id=partner_a`、`actor_type=agent` |
+| 权限 | 23 个 Agent operation scopes，不包含 `decideApproval` |
+| API 联调 | 无 token 访问 manifest=401，SDK 自动取 token 后 manifest=200 |
+| 验签配置 | API 仅配置内网 JWKS URL，`AUTOML_JWT_SECRET` 和 `AUTOML_JWKS_JSON` 均为空 |
+| 对外边界 | identity gateway 只发布 discovery/token/JWKS，`/admin/` 返回 404 |
+
+## 6. 最终服务器验收
 
 | 验收项 | 实测结果 |
 | --- | --- |
@@ -99,7 +117,7 @@ DLP/脱敏。
 | 在线备份 | `automl-backup-20260726T192825Z-78ca1adc` 校验通过，26 个文件，0 个 SQLite sidecar |
 | 历史兼容 | `run_000000000006` 事件 API 从 500 恢复为 200 |
 
-## 6. 公开文档与案例验收
+## 7. 公开文档与案例验收
 
 | 验收项 | 实测结果 |
 | --- | --- |
@@ -110,7 +128,7 @@ DLP/脱敏。
 | 文档链接 | README、文档中心、复现指南、使用手册、案例和 SDK README 的本地链接全部可解析 |
 | 发布包 | 新文档、案例、API/SDK wheel 和 OpenAPI 均收录，`SHA256SUMS` 全部通过 |
 
-## 7. DLP 与责任边界
+## 8. DLP 与责任边界
 
 - API 不把原始数据行嵌入 Agent context，但列名、文件名、类别值、问题和摘要仍是不可信数据派生内容。
 - 第三方 Agent 平台必须在上传前完成数据分级、PII/密钥检测、租户授权和删除/哈希化等处理。
@@ -119,7 +137,7 @@ DLP/脱敏。
 - Bearer、下载票据、artifact、原始数据行和模型访问 token 不得进入 Prompt、记忆或 trace。
 - `allow_pii=false`、`allow_external_llm=true` 都不是 DLP 已完成的证明。
 
-## 8. 已知边界
+## 9. 已知边界
 
 - 单机 profile 不是高可用；不得同时启动两个 API 实例读写同一 SQLite 和对象目录。
 - Webhook 为持久化 outbox，尚无内置 HTTP dispatcher；平台应使用事件轮询/SSE 或外部消费器。
@@ -127,7 +145,7 @@ DLP/脱敏。
 - `production_external_llm_safe=false` 保持不变，DLP 由第三方 Agent 平台实施并共同验收。
 - 集群生产仍需 PostgreSQL/RLS、S3/KMS、独立 worker、dispatcher 和高可用运维。
 
-## 9. 交付判定
+## 10. 交付判定
 
 源码、SDK、OpenAPI、生产部署文件、公开文档/案例和单机服务器均通过本轮验收。
 `scripts/package_release.py` 生成的发布包包含双 wheel、源码、OpenAPI、单/双 IP Compose、文档、可运行案例、

@@ -1,0 +1,128 @@
+{
+  "realm": "automl",
+  "enabled": true,
+  "displayName": "Managed AutoML Identity",
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "registrationEmailAsUsername": false,
+  "rememberMe": false,
+  "verifyEmail": false,
+  "loginWithEmailAllowed": false,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "failureFactor": 5,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "maxDeltaTimeSeconds": 43200,
+  "accessTokenLifespan": 300,
+  "accessTokenLifespanForImplicitFlow": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "offlineSessionIdleTimeout": 2592000,
+  "revokeRefreshToken": true,
+  "refreshTokenMaxReuse": 0,
+  "eventsEnabled": true,
+  "adminEventsEnabled": true,
+  "adminEventsDetailsEnabled": false,
+  "clients": [
+    {
+      "clientId": "${AUTOML_OIDC_AGENT_CLIENT_ID}",
+      "name": "Managed AutoML Agent Platform",
+      "description": "Machine-to-machine client for one external Agent platform tenant.",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${AUTOML_OIDC_AGENT_CLIENT_SECRET}",
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "bearerOnly": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": false,
+      "frontchannelLogout": false,
+      "fullScopeAllowed": false,
+      "defaultClientScopes": [],
+      "optionalClientScopes": [],
+      "attributes": {
+        "client_credentials.use_refresh_token": "false",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false",
+        "use.refresh.tokens": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "managed-automl-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "managed-automl-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "lightweight.claim": "false"
+          }
+        },
+        {
+          "name": "managed-automl-tenant",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "tenant_id",
+            "claim.value": "${AUTOML_OIDC_AGENT_TENANT_ID}",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "managed-automl-actor-type",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "actor_type",
+            "claim.value": "agent",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "managed-automl-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "roles",
+            "claim.value": "agent_platform",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "managed-automl-operation-scopes",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "scopes",
+            "claim.value": "automl:operation:getAgentInterfaceManifest automl:operation:getAgentRunContext automl:operation:listAgentRunActions automl:operation:createDatasetUpload automl:operation:signDatasetUploadParts automl:operation:finalizeDatasetUpload automl:operation:getDatasetVersion automl:operation:createRun automl:operation:listRuns automl:operation:getRun automl:operation:listRunStages automl:operation:readRunEvents automl:operation:listRunOutputs automl:operation:getRunOutput automl:operation:listDecisionPackets automl:operation:answerDecisionPacket automl:operation:pauseRun automl:operation:resumeRun automl:operation:cancelRun automl:operation:getCommand automl:operation:getRunResult automl:operation:getArtifact automl:operation:createArtifactDownloadTicket",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ]
+}

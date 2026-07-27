@@ -40,13 +40,17 @@ command -v openssl >/dev/null 2>&1 || {
 }
 
 umask 077
-mkdir -p "$data_root/state" "$data_root/backups" "$data_root/caddy-data" "$data_root/caddy-config"
+mkdir -p "$data_root/state" "$data_root/backups" "$data_root/caddy-data" \
+  "$data_root/caddy-config" "$data_root/identity-db"
 chmod 0700 "$data_root" "$data_root/state" "$data_root/backups" \
-  "$data_root/caddy-data" "$data_root/caddy-config"
+  "$data_root/caddy-data" "$data_root/caddy-config" "$data_root/identity-db"
 
 jwt_secret=$(openssl rand -hex 48)
 cursor_secret=$(openssl rand -hex 48)
 ticket_secret=$(openssl rand -hex 48)
+oidc_agent_client_secret=$(openssl rand -hex 48)
+oidc_admin_password=$(openssl rand -hex 32)
+oidc_db_password=$(openssl rand -hex 48)
 
 sed \
   -e "s|^AUTOML_PUBLIC_HOST=.*|AUTOML_PUBLIC_HOST=$public_host|" \
@@ -59,8 +63,14 @@ sed \
   -e "s|^AUTOML_BACKUP_HOST_DIR=.*|AUTOML_BACKUP_HOST_DIR=$data_root/backups|" \
   -e "s|^AUTOML_CADDY_DATA_HOST_DIR=.*|AUTOML_CADDY_DATA_HOST_DIR=$data_root/caddy-data|" \
   -e "s|^AUTOML_CADDY_CONFIG_HOST_DIR=.*|AUTOML_CADDY_CONFIG_HOST_DIR=$data_root/caddy-config|" \
+  -e "s|^AUTOML_OIDC_PUBLIC_HOST=.*|AUTOML_OIDC_PUBLIC_HOST=$public_host|" \
+  -e "s|^AUTOML_OIDC_HTTPS_BIND_ADDRESS=.*|AUTOML_OIDC_HTTPS_BIND_ADDRESS=$bind_address|" \
+  -e "s|^AUTOML_OIDC_AGENT_CLIENT_SECRET=.*|AUTOML_OIDC_AGENT_CLIENT_SECRET=$oidc_agent_client_secret|" \
+  -e "s|^AUTOML_OIDC_ADMIN_PASSWORD=.*|AUTOML_OIDC_ADMIN_PASSWORD=$oidc_admin_password|" \
+  -e "s|^AUTOML_OIDC_DB_PASSWORD=.*|AUTOML_OIDC_DB_PASSWORD=$oidc_db_password|" \
+  -e "s|^AUTOML_OIDC_DB_HOST_DIR=.*|AUTOML_OIDC_DB_HOST_DIR=$data_root/identity-db|" \
   .env.production-single.example >"$env_file"
 chmod 0600 "$env_file"
 
 echo "created $env_file and protected runtime directories"
-echo "review resource limits, TabPFN settings, and the bind address before starting"
+echo "review resource limits, OIDC tenant/client settings, TabPFN settings, and bind addresses"

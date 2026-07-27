@@ -19,6 +19,7 @@
 - 数据上传、Run 创建、事件观察、结构化中断、回答后恢复、输出、结果和 artifact 下载闭环。
 - 标准 tabular 后端：scikit-learn、AutoGluon Tabular、TabPFN。TabPFN 的真实权重启用受许可、token 或 checkpoint 条件约束。
 - 单机生产 Compose：非 root API、只读文件系统、私有 HTTPS 网关、资源限制、审计、指标和自动备份。
+- 可选 OIDC Compose：Keycloak/PostgreSQL 身份栈、五分钟 `client_credentials` JWT、内网 JWKS 验签和 SDK 自动刷新。
 - 测试报告、路由手册、后端说明、外部 Agent 集成契约和 release bundle 校验工具。
 
 Dockerfile 的 production target 声明以下依赖与控制面能力。当前最新工作树的全量 Docker 构建和
@@ -59,6 +60,7 @@ Dockerfile 的 production target 声明以下依赖与控制面能力。当前�
 | 生产环境变量模板 | `.env.production.example` | Compose/部署系统的生产配置样例 |
 | 单机生产环境模板 | `.env.production-single.example` | 可运行单机生产配置 |
 | 单机生产手册 | `docs/single-node-production.md` | HTTPS、JWT、备份、升级和验收 |
+| OIDC 部署与接入 | `compose.oidc.yaml`、`docs/oidc-client-credentials.md` | 自动获取/刷新短期 token，JWKS 验签 |
 | Dockerfile/Compose | `Dockerfile`、`compose.yaml` | 本地和单节点部署 |
 | Python SDK | `packages/python_sdk` | 外部系统同步客户端 |
 | CI workflow | `.github/workflows/ci.yml` | lint、format、OpenAPI、pytest 验证 |
@@ -260,7 +262,7 @@ dispatcher 已接入请求路径并完成验收后的新代码版本，才允许
 
 | 编号 | 门禁 | 当前状态 | 验收方式 |
 | --- | --- | --- | --- |
-| G-001 | OIDC/JWKS 或 workload identity | verifier 已接入；真实 IdP 未验收 | 使用真实 IdP 验证 issuer/audience/kid/key rotation |
+| G-001 | OIDC/JWKS 或 workload identity | 单节点 Keycloak/client_credentials 已接入；企业 IdP 联邦和集群轮换演练待完成 | 使用目标组织 IdP 验证 issuer/audience/kid/key rotation |
 | G-002 | PostgreSQL/RLS | 仅客户端依赖和 bootstrap SQL，运行时仍为 SQLite | 跨租户读取、写入和分页测试全部返回预期 |
 | G-003 | 对象存储/KMS | 仅 boto3 依赖，运行时仍为本地文件 | 上传、finalize、download ticket、Range、hash 验证通过 |
 | G-004 | Worker 隔离与硬超时 | 未完成，运行时仍为进程内 worker | AutoGluon/TabPFN 超时、内存、CPU 和取消测试通过 |

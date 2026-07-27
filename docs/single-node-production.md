@@ -139,7 +139,23 @@ docker compose \
 不要给生产客户端使用 `curl -k` 或关闭证书校验。若用公网域名，应用组织证书策略或替换为受信
 CA 证书，并继续保持 API 容器不发布明文端口。
 
-## 6. 给 Agent 平台签发凭据
+## 6. 给 Agent 平台提供凭据
+
+### 6.1 推荐：OIDC/OAuth2 自动取 token
+
+正式嵌入 Agent 平台时，使用 `compose.oidc.yaml` 部署独立 Keycloak/PostgreSQL 身份服务。平台通过
+OAuth2 `client_credentials` 自动获取五分钟 access token，AutoML API 通过内部 JWKS 地址验证，
+不再要求运维人员每小时人工发 JWT。部署、调用、轮换和验收见
+[OIDC/OAuth2 Client Credentials 接入手册](oidc-client-credentials.md)。
+
+```bash
+docker compose --env-file .env.production-single \
+  -f compose.production-single.yaml \
+  -f compose.oidc.yaml \
+  up -d --wait
+```
+
+### 6.2 受控环境兼容：本地 HS256 签发
 
 签发器只输出短期 HS256 token，并拒绝 canonical OpenAPI 之外的 operationId。下面的 Agent
 token 可以上传、创建 Run、观察事件和读取结果，但不能回答 `HUMAN_REQUIRED` packet：

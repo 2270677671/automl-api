@@ -20,6 +20,21 @@ class ProtocolError(AutoMLError):
     """The API returned a response that violates the public contract."""
 
 
+class OAuthTokenError(AutoMLError):
+    """The OAuth identity service did not issue a usable access token."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        error: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.error = error
+
+
 class APIError(AutoMLError):
     """An HTTP error represented by an RFC 9457 problem document."""
 

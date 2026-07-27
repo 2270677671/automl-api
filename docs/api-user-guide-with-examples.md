@@ -18,7 +18,11 @@ Prompt、DLP/脱敏、凭据保管和人机交互，API 负责可恢复的 AutoM
 两个入口使用同一内部 Caddy CA，但各自使用与 IP 匹配的证书。客户端必须安装或显式指定
 该 CA，生产调用不得使用 `curl -k` 或 `verify=False`。
 
-先准备环境变量：
+生产 Agent 平台不应等待部署方反复人工发放 JWT。推荐为每个合作方分配独立
+`client_id/client_secret`，通过 OIDC token endpoint 自动获取和刷新 `AUTOML_TOKEN`，完整部署和
+调用方法见[《OIDC/OAuth2 Client Credentials 接入手册》](oidc-client-credentials.md)。
+
+调用本 API 时使用的环境变量：
 
 ```bash
 export AUTOML_API_URL=https://192.168.77.32:8443
@@ -27,8 +31,9 @@ export AUTOML_TOKEN='<short-lived-agent-jwt>'
 export AUTOML_HUMAN_TOKEN='<short-lived-human-jwt>'
 ```
 
-`AUTOML_TOKEN` 和 `AUTOML_HUMAN_TOKEN` 必须属于同一 tenant，但 actor type 分别为 `agent` 和
-`human`。不得将 token 放入 Git、Prompt、记忆、trace、issue 或命令行参数。
+`AUTOML_TOKEN` 是 OAuth token endpoint 返回的短期 access token，不是长期 API key；SDK 可在到期前
+自动重取。`AUTOML_TOKEN` 和 `AUTOML_HUMAN_TOKEN` 必须属于同一 tenant，但 actor type 分别为
+`agent` 和 `human`。不得将 token 或 client secret 放入 Git、Prompt、记忆、trace、issue 或命令行参数。
 
 ## 3. 使用前检查
 
@@ -563,6 +568,7 @@ Agent 平台应将 OpenAPI 中的 canonical operation 注册为受限工具，�
 - [完整复现指南](reproduction-guide.md)
 - [API 路由使用手册](api-route-reference.md)
 - [外部 Agent 平台接入契约](external-agent-integration.md)
+- [OIDC/OAuth2 Client Credentials 接入手册](oidc-client-credentials.md)
 - [sklearn、AutoGluon 和 TabPFN 后端说明](framework-backends.md)
 - [可运行案例目录](../examples/README.md)
 - [Python SDK 说明](../packages/python_sdk/README.md)

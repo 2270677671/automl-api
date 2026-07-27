@@ -158,7 +158,11 @@ curl --cacert "$AUTOML_CA" -fsS "$AUTOML_API/healthz"
 需要同时精确绑定两个内网 IP 时，使用 `compose.dual-ip.yaml` 启动第二个网关，完整变量、
 启动命令和验收步骤见[单机生产部署手册](single-node-production.md#3-初始化)。
 
-### 6.3 签发最小权限凭据
+### 6.3 获取最小权限凭据
+
+正式 Agent 平台接入使用 [OIDC/OAuth2 Client Credentials](oidc-client-credentials.md)：平台持有
+独立 client secret，自动获取和刷新短期 access token，API 只通过 JWKS 验证。下面的本地 HS256
+命令仅用于不具备外部 IdP 的受控单机兼容部署。
 
 Agent token 至少需要本案例所使用的 operation：
 

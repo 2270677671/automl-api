@@ -47,8 +47,21 @@ uv run python examples/python/http_guided_workflow.py
 
 ## 3. 生产 HTTPS 案例
 
-生产环境需要两个同 tenant、不同 actor type 的短期 JWT。Agent token 负责上传、创建和读取；Human
-token 只负责回答 `HUMAN_REQUIRED` packet 和查询 command。
+生产 Agent token 应通过 OAuth2 `client_credentials` 自动获取，而不是等待人工发放。验证身份链路：
+
+```bash
+export AUTOML_API_URL=https://automl.internal.example.com:8443
+export AUTOML_OIDC_TOKEN_URL=https://identity.internal.example.com/realms/automl/protocol/openid-connect/token
+export AUTOML_OIDC_CLIENT_ID=automl-agent-platform
+export AUTOML_OIDC_CLIENT_SECRET='<secret-manager-value>'
+export AUTOML_CA_FILE=/secure/path/automl-root.crt
+
+PYTHONPATH=packages/python_sdk/src \
+uv run python examples/python/oauth_client_credentials.py
+```
+
+完整 workflow 还需要同 tenant 的 Human token。Agent token 负责上传、创建和读取；Human token 只
+负责回答 `HUMAN_REQUIRED` packet 和查询 command。
 
 ```bash
 export AUTOML_API_URL=https://automl.internal.example.com:8443
@@ -60,8 +73,9 @@ PYTHONPATH=packages/python_sdk/src \
 uv run python examples/python/sdk_guided_workflow.py
 ```
 
-不要把 token 写入命令参数、脚本、`.env.example`、Git、Prompt、trace 或 issue。生产 token 的完整 scope
-列表和签发方式见[完整复现指南](../docs/reproduction-guide.md#63-签发最小权限凭据)。
+不要把 token 或 client secret 写入命令参数、脚本、`.env.example`、Git、Prompt、trace 或 issue。
+自动取 token 见 [OIDC 接入手册](../docs/oidc-client-credentials.md)，Human token 规则见
+[完整复现指南](../docs/reproduction-guide.md#63-获取最小权限凭据)。
 
 ## 4. 切换后端
 

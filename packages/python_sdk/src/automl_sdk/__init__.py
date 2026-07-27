@@ -19,6 +19,7 @@ from .exceptions import (
     EventCursorExpiredError,
     GoneError,
     NotFoundError,
+    OAuthTokenError,
     PreconditionFailedError,
     ProtocolError,
     RateLimitError,
@@ -28,6 +29,7 @@ from .exceptions import (
     ValidationError,
     WaitTimeoutError,
 )
+from .oauth import OAuth2ClientCredentialsTokenProvider
 
 __all__ = [
     "APIError",
@@ -45,6 +47,8 @@ __all__ = [
     "EventCursorExpiredError",
     "GoneError",
     "NotFoundError",
+    "OAuth2ClientCredentialsTokenProvider",
+    "OAuthTokenError",
     "PreconditionFailedError",
     "ProtocolError",
     "RateLimitError",

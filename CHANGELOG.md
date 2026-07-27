@@ -22,6 +22,9 @@ Semantic Versioning for the public HTTP and Python SDK contracts.
 - Added a fail-closed formal image target, production dependency reporting, OIDC/JWKS verification,
   PostgreSQL/RLS migration assets, durable Webhook endpoint/outbox APIs, human approval controls,
   local physical deletion jobs, model candidate registration, and matching Python SDK helpers.
+- Added a deployable Keycloak/PostgreSQL identity overlay, OAuth2 client-credentials token
+  acquisition and automatic SDK renewal, internal JWKS verification, an identity backup sidecar,
+  and a non-secret-bearing production verification command.
 
 ## 0.7.0 - 2026-07-24
 

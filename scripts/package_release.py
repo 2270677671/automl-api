@@ -169,6 +169,7 @@ def _copy_inputs(bundle: Path, api_wheel: Path, sdk_wheel: Path) -> None:
         "compose.gpu.yaml": "compose.gpu.yaml",
         "compose.gpu-direct.yaml": "compose.gpu-direct.yaml",
         "compose.dual-ip.yaml": "compose.dual-ip.yaml",
+        "compose.oidc.yaml": "compose.oidc.yaml",
         "compose.production-single.yaml": "compose.production-single.yaml",
         ".dockerignore": ".dockerignore",
         ".env.example": ".env.example",
@@ -183,6 +184,7 @@ def _copy_inputs(bundle: Path, api_wheel: Path, sdk_wheel: Path) -> None:
         "docs/api-user-guide-with-examples.md": "docs/api-user-guide-with-examples.md",
         "docs/complete-api-design.md": "docs/complete-api-design.md",
         "docs/framework-backends.md": "docs/framework-backends.md",
+        "docs/oidc-client-credentials.md": "docs/oidc-client-credentials.md",
         "docs/production-delivery.md": "docs/production-delivery.md",
         "docs/reproduction-guide.md": "docs/reproduction-guide.md",
         "docs/single-node-production.md": "docs/single-node-production.md",
@@ -200,6 +202,7 @@ def _copy_inputs(bundle: Path, api_wheel: Path, sdk_wheel: Path) -> None:
     for source_name in (
         "scripts/init_single_node_production.sh",
         "scripts/issue_hs256_token.py",
+        "scripts/verify_oidc_deployment.py",
     ):
         source = ROOT / source_name
         if not source.is_file():
