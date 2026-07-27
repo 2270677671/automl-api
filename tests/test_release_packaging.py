@@ -32,6 +32,7 @@ def test_release_bundle_contains_public_documentation_and_examples(tmp_path: Pat
 
     required_paths = (
         "docs/README.md",
+        "docs/api-user-guide-with-examples.md",
         "docs/reproduction-guide.md",
         "docs/user-manual.md",
         "compose.dual-ip.yaml",

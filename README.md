@@ -16,6 +16,7 @@ the default local profile it can:
 | --- | --- |
 | 从 GitHub 完整复现 | [完整复现指南](docs/reproduction-guide.md) |
 | 使用者操作说明 | [使用手册](docs/user-manual.md) |
+| 获取带完整案例的单文件手册 | [API 使用手册与示范案例](docs/api-user-guide-with-examples.md) |
 | 查询全部 API 路由 | [API 路由使用手册](docs/api-route-reference.md) |
 | 运行 SDK/原始 HTTP 案例 | [examples/README.md](examples/README.md) |
 | 嵌入 Agent 平台 | [外部 Agent 接入契约](docs/external-agent-integration.md) |

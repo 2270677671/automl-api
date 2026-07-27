@@ -180,6 +180,7 @@ def _copy_inputs(bundle: Path, api_wheel: Path, sdk_wheel: Path) -> None:
         "docs/external-agent-integration.md": "docs/external-agent-integration.md",
         "docs/api-usage.md": "docs/api-usage.md",
         "docs/api-route-reference.md": "docs/api-route-reference.md",
+        "docs/api-user-guide-with-examples.md": "docs/api-user-guide-with-examples.md",
         "docs/complete-api-design.md": "docs/complete-api-design.md",
         "docs/framework-backends.md": "docs/framework-backends.md",
         "docs/production-delivery.md": "docs/production-delivery.md",
