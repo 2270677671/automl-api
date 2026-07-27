@@ -155,6 +155,8 @@ curl --cacert "$AUTOML_CA" -fsS "$AUTOML_API/healthz"
 ```
 
 生产客户端不得使用 `curl -k` 或关闭 TLS 校验。公网部署应改用组织认可的证书与域名策略。
+需要同时精确绑定两个内网 IP 时，使用 `compose.dual-ip.yaml` 启动第二个网关，完整变量、
+启动命令和验收步骤见[单机生产部署手册](single-node-production.md#3-初始化)。
 
 ### 6.3 签发最小权限凭据
 

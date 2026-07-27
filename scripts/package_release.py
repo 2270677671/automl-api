@@ -168,6 +168,7 @@ def _copy_inputs(bundle: Path, api_wheel: Path, sdk_wheel: Path) -> None:
         "compose.yaml": "compose.yaml",
         "compose.gpu.yaml": "compose.gpu.yaml",
         "compose.gpu-direct.yaml": "compose.gpu-direct.yaml",
+        "compose.dual-ip.yaml": "compose.dual-ip.yaml",
         "compose.production-single.yaml": "compose.production-single.yaml",
         ".dockerignore": ".dockerignore",
         ".env.example": ".env.example",

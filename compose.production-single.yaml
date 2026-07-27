@@ -236,7 +236,7 @@ services:
     # Keep it in the bounding set so it remains executable with no-new-privileges.
     cap_add: [DAC_OVERRIDE, NET_BIND_SERVICE]
     security_opt: [no-new-privileges:true]
-    pids_limit: 128
+    pids_limit: "${AUTOML_GATEWAY_PIDS_LIMIT:-512}"
     cpus: "${AUTOML_GATEWAY_CPU_LIMIT:-1.0}"
     mem_limit: "${AUTOML_GATEWAY_MEMORY_LIMIT:-256m}"
     logging:

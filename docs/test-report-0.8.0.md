@@ -2,7 +2,7 @@
 
 ## 1. 结论
 
-0.8.0 已通过 150 项源码回归、发布门禁和最终单机生产服务器验收。当前
+0.8.0 已通过 152 项源码回归、发布门禁和最终单机生产服务器验收。当前
 `single-node-production` 可作为第三方 Agent 平台调用的独立 AutoML API 使用，覆盖 HTTPS/JWT、
 数据上传、结构化中断与人工恢复、sklearn、AutoGluon、TabPFN/CUDA、JSON/SSE 事件、结果和
 artifact 下载、审计以及在线备份。
@@ -24,7 +24,7 @@ DLP/脱敏。
 | 最终 GPU 镜像 | `sha256:8a8cb0707f800d81e2ca486653977d90dc997d227114a780e3bc7fa73d281a38` |
 | 回滚镜像 | `sha256:b47aeccb6a8a65ea165e1d27a9f783b50690421d456a585eb19b3beb0c28b82c` |
 | 生产锁定 | `uv.lock`、`requirements.production.lock` |
-| 生产部署文件 | `compose.production-single.yaml`、`compose.gpu-direct.yaml`、`deploy/single-node/Caddyfile` |
+| 生产部署文件 | `compose.production-single.yaml`、`compose.dual-ip.yaml`、`compose.gpu-direct.yaml`、`deploy/single-node/Caddyfile` |
 
 ## 3. 自动化门禁
 
@@ -32,7 +32,7 @@ DLP/脱敏。
 | --- | --- |
 | `uv run ruff check .` | 通过 |
 | `uv run ruff format --check .` | 通过，64 个 Python 文件无格式偏差 |
-| `uv run pytest -q` | 150 个 case：150 通过，0 跳过，0 失败 |
+| `uv run pytest -q` | 152 个 case：152 通过，0 跳过，0 失败 |
 | `uv lock --check` | 通过，103 个 package 解析一致 |
 | `scripts/generate_agent_openapi.py --check` | 通过，Agent OpenAPI 无漂移 |
 | `python -m automl_api.production` | 通过，5 个必选 Python 生产依赖均为 pass |
@@ -80,6 +80,7 @@ DLP/脱敏。
 | P-035 | GPU 运行 | 容器能识别 RTX 4090 并执行 TabPFN 回归 | 通过 | CUDA 探针与 `run_000000000013` |
 | P-036 | 外部 LLM 边界 | manifest 不虚报生产 DLP | 通过 | `production_external_llm_safe=false` |
 | P-037 | 文档与案例 | 链接、JSON、CSV、Python 和发布包收录持续可验证 | 通过 | `tests/test_documentation_examples.py` 与 release packaging case |
+| P-038 | 双 IP 生产入口 | 两个精确绑定各自通过 TLS，数据面 URL 保持请求 Origin | 通过 | multi-origin 回归与真实服务器验收 |
 
 ## 5. 最终服务器验收
 
@@ -87,6 +88,8 @@ DLP/脱敏。
 | --- | --- |
 | 最终镜像切换 | API 运行 `8a8cb070…`，API 与 gateway healthy |
 | HTTPS | `/healthz=200`，安全响应头存在 |
+| 双 IP HTTPS | `192.168.194.67:8443` 和 `192.168.77.32:8443` 分别由独立网关精确绑定，CA/IP SAN 校验通过 |
+| 双 IP 数据面 | 两个入口创建 upload session 均返回同 Origin URL，测试数据已删除 |
 | 内部端点隔离 | 外部 `/readyz=404`、`/metrics=404` |
 | 旧服务兼容 | 旧 `:8000/healthz=200`，未被本次发布替换 |
 | sklearn 人机闭环 | `run_000000000011` 成功，14 个 JSON 事件、14 个 SSE 事件 |
@@ -127,6 +130,6 @@ DLP/脱敏。
 ## 9. 交付判定
 
 源码、SDK、OpenAPI、生产部署文件、公开文档/案例和单机服务器均通过本轮验收。
-`scripts/package_release.py` 生成的发布包包含双 wheel、源码、OpenAPI、Compose、文档、可运行案例、
+`scripts/package_release.py` 生成的发布包包含双 wheel、源码、OpenAPI、单/双 IP Compose、文档、可运行案例、
 manifest 和 `SHA256SUMS`；GitHub 交付不包含 14.7 GB GPU 镜像。需要离线自托管时，应从受控
 镜像仓库按 digest 分发，或单独用 `scripts/package_release.py --docker-image ...` 生成平台匹配的镜像包。

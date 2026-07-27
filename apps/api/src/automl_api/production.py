@@ -193,11 +193,17 @@ def _oidc_check(source: Mapping[str, str], *, required: bool, formal: bool) -> P
 
 def _tls_gateway_check(source: Mapping[str, str], *, required: bool) -> ProductionCheck:
     public_base_url = source.get("AUTOML_PUBLIC_BASE_URL", "").strip()
+    public_base_urls = [public_base_url]
+    public_base_urls.extend(
+        item.strip()
+        for item in source.get("AUTOML_PUBLIC_BASE_URLS", "").split(",")
+        if item.strip()
+    )
     allowed_hosts = {
         item.strip() for item in source.get("AUTOML_ALLOWED_HOSTS", "").split(",") if item.strip()
     }
-    parsed = urlsplit(public_base_url)
-    valid_origin = (
+    parsed_origins = [urlsplit(value) for value in public_base_urls]
+    valid_origins = all(
         parsed.scheme == "https"
         and bool(parsed.hostname)
         and parsed.username is None
@@ -205,18 +211,23 @@ def _tls_gateway_check(source: Mapping[str, str], *, required: bool) -> Producti
         and parsed.query == ""
         and parsed.fragment == ""
         and parsed.path in {"", "/"}
+        for parsed in parsed_origins
     )
-    public_host_allowed = bool(parsed.hostname) and any(
-        host == parsed.hostname
-        or (host.startswith("*.") and parsed.hostname.endswith(host.removeprefix("*")))
-        for host in allowed_hosts
+    public_hosts_allowed = all(
+        bool(parsed.hostname)
+        and any(
+            host == parsed.hostname
+            or (host.startswith("*.") and parsed.hostname.endswith(host.removeprefix("*")))
+            for host in allowed_hosts
+        )
+        for parsed in parsed_origins
     )
     ok = (
         _enabled(source.get("AUTOML_TLS_TERMINATED"))
-        and valid_origin
+        and valid_origins
         and bool(allowed_hosts)
         and "*" not in allowed_hosts
-        and public_host_allowed
+        and public_hosts_allowed
     )
     return ProductionCheck(
         "tls_gateway",

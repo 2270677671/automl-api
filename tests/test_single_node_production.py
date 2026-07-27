@@ -310,6 +310,7 @@ def test_cli_disables_raw_access_logs_and_configures_the_trusted_proxy(
 def test_gateway_redacts_download_ticket_uris_and_defines_the_proxy_boundary() -> None:
     caddyfile = (_ROOT / "deploy" / "single-node" / "Caddyfile").read_text(encoding="utf-8")
     compose = (_ROOT / "compose.production-single.yaml").read_text(encoding="utf-8")
+    dual_compose = (_ROOT / "compose.dual-ip.yaml").read_text(encoding="utf-8")
     dockerfile = (_ROOT / "Dockerfile").read_text(encoding="utf-8")
 
     assert "log_skip @download_ticket" in caddyfile
@@ -317,12 +318,18 @@ def test_gateway_redacts_download_ticket_uris_and_defines_the_proxy_boundary() -
     assert "@compressible not path /v1/artifact-downloads/*" in caddyfile
     assert "encode @compressible zstd gzip" in caddyfile
     assert "default_sni {$AUTOML_PUBLIC_HOST}" in caddyfile
+    assert "skip_install_trust" in caddyfile
     assert ":8443 {\n\trespond 421\n}" in caddyfile
     assert 'AUTOML_FORWARDED_ALLOW_IPS: "*"' in compose
     assert "cap_add: [DAC_OVERRIDE, NET_BIND_SERVICE]" in compose
     assert "https://$$AUTOML_PUBLIC_HOST:8443/healthz" in compose
     assert "healthcheck:\n      disable: true" in compose
     assert "header_up X-Forwarded-Proto https" in caddyfile
+    assert "AUTOML_PUBLIC_BASE_URLS" in dual_compose
+    assert "AUTOML_SECONDARY_HTTPS_BIND_ADDRESS" in dual_compose
+    assert "gateway-secondary:" in dual_compose
+    assert 'AUTOML_PUBLIC_HOST: "${AUTOML_SECONDARY_PUBLIC_HOST:' in dual_compose
+    assert "${AUTOML_GATEWAY_PIDS_LIMIT:-512}" in compose
     assert 'project["dependencies"]' in dockerfile
     assert "--constraint requirements.production.lock" in dockerfile
     assert "--requirement requirements.production.lock" not in dockerfile
@@ -351,6 +358,72 @@ def test_public_base_url_controls_upload_urls(
         )
     assert response.status_code == 201, response.text
     assert response.json()["parts"][0]["url"].startswith("https://automl.partner.test:8443/")
+
+
+def test_public_base_url_uses_an_exact_configured_secondary_origin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    primary = "https://192.168.194.67:8443"
+    secondary = "https://192.168.77.32:8443"
+    _set_environment(
+        monkeypatch,
+        {
+            "AUTOML_PUBLIC_BASE_URL": primary,
+            "AUTOML_PUBLIC_BASE_URLS": f"{primary},{secondary}",
+            "AUTOML_STATE_DIR": str(tmp_path / "state"),
+        },
+    )
+    with TestClient(create_app(), base_url=secondary) as client:
+        response = client.post(
+            "/v1/datasets",
+            headers=mutation_headers("secondary-public-base-url-test-0001"),
+            json={
+                "name": "secondary-public-url",
+                "filename": "data.csv",
+                "media_type": "text/csv",
+                "size_bytes": 8,
+            },
+        )
+        unrecognized = client.post(
+            "/v1/datasets",
+            headers={
+                **mutation_headers("unrecognized-public-base-url-test-0001"),
+                "Host": "unrecognized.example:8443",
+            },
+            json={
+                "name": "canonical-public-url",
+                "filename": "data.csv",
+                "media_type": "text/csv",
+                "size_bytes": 8,
+            },
+        )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["parts"][0]["url"].startswith(f"{secondary}/")
+    assert unrecognized.status_code == 201, unrecognized.text
+    assert unrecognized.json()["parts"][0]["url"].startswith(f"{primary}/")
+
+
+def test_single_node_readiness_validates_every_public_origin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = _single_node_environment(tmp_path)
+    environment["AUTOML_PUBLIC_BASE_URLS"] = "https://testserver,https://secondary.automl.test:8443"
+    environment["AUTOML_ALLOWED_HOSTS"] += ",secondary.automl.test"
+    _set_environment(monkeypatch, environment)
+    with TestClient(create_app()) as client:
+        ready = client.get("/readyz")
+    assert ready.status_code == 200, ready.text
+
+    environment["AUTOML_ALLOWED_HOSTS"] = "testserver,automl-api,127.0.0.1"
+    environment["AUTOML_STATE_DIR"] = str(tmp_path / "invalid-state")
+    environment["AUTOML_BACKUP_DIR"] = str(tmp_path / "invalid-backups")
+    _set_environment(monkeypatch, environment)
+    with TestClient(create_app()) as client:
+        rejected = client.get("/readyz")
+    assert rejected.status_code == 503, rejected.text
+    checks = {item["name"]: item for item in rejected.json()["production"]["checks"]}
+    assert checks["tls_gateway"]["status"] == "fail"
 
 
 def test_backup_verify_restore_and_tamper_detection(tmp_path: Path) -> None:

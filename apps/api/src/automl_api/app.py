@@ -12,6 +12,7 @@ from importlib import resources
 from pathlib import Path
 from time import monotonic
 from typing import Annotated, Any, AsyncIterator
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import anyio
@@ -131,9 +132,41 @@ def _enabled_environment(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in _TRUTHY
 
 
+def _origin_identity(value: str) -> tuple[str, str, int] | None:
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        return None
+    scheme = parsed.scheme.lower()
+    hostname = (parsed.hostname or "").lower()
+    if (
+        scheme not in {"http", "https"}
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    return scheme, hostname, port or (443 if scheme == "https" else 80)
+
+
 def _public_base_url(request: Request) -> str:
-    configured = os.environ.get("AUTOML_PUBLIC_BASE_URL", "").strip()
-    return (configured or str(request.base_url)).rstrip("/")
+    primary = os.environ.get("AUTOML_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    configured = [primary] if primary else []
+    configured.extend(
+        item.strip().rstrip("/")
+        for item in os.environ.get("AUTOML_PUBLIC_BASE_URLS", "").split(",")
+        if item.strip()
+    )
+    request_base_url = str(request.base_url).rstrip("/")
+    request_origin = _origin_identity(request_base_url)
+    for candidate in dict.fromkeys(configured):
+        if _origin_identity(candidate) == request_origin:
+            return candidate
+    return primary or request_base_url
 
 
 def _configured_ticket_secret(*, required: bool) -> bytes | None:

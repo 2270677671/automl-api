@@ -46,6 +46,22 @@ docker compose \
 目录。它不会覆盖已有 `.env.production-single`。正式启动前检查 CPU、内存、数据集、租户和
 并发上限，并把环境文件纳入主机秘密备份，禁止提交 Git。
 
+需要同时精确绑定两个内网 IP 时，增加以下配置：
+
+```dotenv
+AUTOML_PUBLIC_HOST=192.168.194.67
+AUTOML_HTTPS_BIND_ADDRESS=192.168.194.67
+AUTOML_SECONDARY_PUBLIC_HOST=192.168.77.32
+AUTOML_SECONDARY_HTTPS_BIND_ADDRESS=192.168.77.32
+AUTOML_GATEWAY_PIDS_LIMIT=512
+```
+
+后续所有 Compose 命令都附加 `-f compose.dual-ip.yaml`。该覆盖文件会为第二个 IP 启动
+独立网关；两个网关共享 API 和 Caddy PKI 存储，但各自维护正确的默认 SNI、IP 证书和精确
+端口绑定。API 只会在请求 Origin 准确匹配配置白名单时，返回该 Origin 的
+upload/artifact URL，其他 Host 仍使用 canonical `AUTOML_PUBLIC_HOST`。不要用 `0.0.0.0`
+代替双精确绑定。
+
 ## 4. 启动
 
 CPU 模式：
@@ -54,8 +70,11 @@ CPU 模式：
 docker compose \
   --env-file .env.production-single \
   -f compose.production-single.yaml \
+  -f compose.dual-ip.yaml \
   up -d --build --wait --wait-timeout 300
 ```
+
+单 IP 部署应省略 `-f compose.dual-ip.yaml`。
 
 GPU/TabPFN 模式先在 `.env.production-single` 中设置：
 

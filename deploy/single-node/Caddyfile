@@ -2,6 +2,7 @@
 	admin off
 	auto_https disable_redirects
 	default_sni {$AUTOML_PUBLIC_HOST}
+	skip_install_trust
 	log default {
 		format filter {
 			wrap json
