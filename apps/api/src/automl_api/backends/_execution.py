@@ -9,12 +9,13 @@ from typing import Any, Protocol
 from sklearn.base import clone
 
 from ..ml_engine import (
+    ExecutionStageCallback,
     ModelTrainingError,
     PreparedTabularData,
     TabularAutoMLResult,
     _build_preprocessor,
     _cross_validated_metrics,
-    _holdout_metrics,
+    _holdout_evaluation,
     _jsonify,
     _metric_is_maximized,
     _metric_value,
@@ -24,6 +25,7 @@ from ..ml_engine import (
     _scoring,
     _stable_hash,
 )
+from ..visualization import render_evaluation_visualizations, visualization_status
 
 
 class PredictiveModel(Protocol):
@@ -50,6 +52,7 @@ def assemble_native_result(
     limitations: list[str],
     exportable: bool = True,
     native_trials: list[dict[str, Any]] | None = None,
+    stage_callback: ExecutionStageCallback | None = None,
 ) -> TabularAutoMLResult:
     """Evaluate a frozen native candidate once and build protocol-ready records."""
 
@@ -88,17 +91,24 @@ def assemble_native_result(
         ) from error
 
     holdout_features, holdout_target = prepared.sealed_holdout.open_once()
-    baseline_holdout_metrics = _holdout_metrics(
+    baseline_holdout = _holdout_evaluation(
         fitted_baseline,
         holdout_features,
         holdout_target,
         prepared.task_type,
     )
-    candidate_holdout_metrics = _holdout_metrics(
+    candidate_holdout = _holdout_evaluation(
         fitted_candidate,
         holdout_features,
         holdout_target,
         prepared.task_type,
+    )
+    baseline_holdout_metrics = baseline_holdout.metrics
+    candidate_holdout_metrics = candidate_holdout.metrics
+    visualizations = render_evaluation_visualizations(
+        task_type=prepared.task_type,
+        baseline_metrics=baseline_holdout_metrics,
+        candidate=candidate_holdout,
     )
     baseline_primary = float(baseline_holdout_metrics[primary_metric])
     candidate_primary = float(candidate_holdout_metrics[primary_metric])
@@ -152,6 +162,9 @@ def assemble_native_result(
             "evaluation_protocol": "CROSS_VALIDATION",
         }
     ]
+    if stage_callback is not None:
+        stage_callback("TRAIN", {"baseline": baseline, "trials": trials})
+
     evaluation = {
         "kind": "EVALUATION_REPORT",
         "primary_metric": primary_metric,
@@ -185,6 +198,8 @@ def assemble_native_result(
         "failed_gates": ["PRODUCTION_ELIGIBILITY_NOT_EVALUATED"],
         "eligibility_reason": "EVALUATION_ONLY_NO_PRODUCTION_GATE",
         "limitations": limitations,
+        "visualization_status": visualization_status([item.metadata() for item in visualizations]),
+        "visualizations": [item.metadata() for item in visualizations],
     }
 
     model_sha256 = hashlib.sha256(model_bytes).hexdigest()
@@ -257,6 +272,7 @@ def assemble_native_result(
         baseline=baseline,
         trials=trials,
         evaluation=evaluation,
+        visualizations=visualizations,
         model_metadata=model_metadata,
         model_bytes=model_bytes,
         report_bytes=report_bytes,

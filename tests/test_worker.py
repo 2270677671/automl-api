@@ -195,6 +195,112 @@ def test_worker_does_not_retry_after_control_epoch_fence(tmp_path: Path) -> None
     asyncio.run(scenario())
 
 
+def test_worker_renews_long_running_handler_without_duplicate_claim(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        store = SqliteStore(tmp_path / "worker-renewal.db")
+        run_id = await _create_job(store)
+        handler_started = asyncio.Event()
+        release_handler = asyncio.Event()
+
+        async def long_handler(_job: dict[str, Any]):
+            handler_started.set()
+            await release_handler.wait()
+            return COMPLETE
+
+        duplicate_calls = 0
+
+        async def duplicate_handler(_job: dict[str, Any]):
+            nonlocal duplicate_calls
+            duplicate_calls += 1
+            return COMPLETE
+
+        worker_a = LocalExecutionWorker(
+            store,
+            long_handler,
+            worker_id="worker-renewing",
+            lease_seconds=0.12,
+        )
+        worker_b = LocalExecutionWorker(
+            store,
+            duplicate_handler,
+            worker_id="worker-duplicate",
+            lease_seconds=1,
+        )
+        running = asyncio.create_task(worker_a.run_once())
+        await asyncio.wait_for(handler_started.wait(), timeout=1)
+        await asyncio.sleep(0.25)
+
+        leased = await store.get_execution_job(run_id)
+        assert leased is not None
+        assert leased["status"] == "LEASED"
+        assert leased["lease_owner"] == "worker-renewing"
+        assert leased["lease_generation"] == 1
+        assert await worker_b.run_once() is False
+        assert duplicate_calls == 0
+
+        release_handler.set()
+        assert await asyncio.wait_for(running, timeout=1) is True
+        completed = await store.get_execution_job(run_id)
+        assert completed is not None
+        assert completed["status"] == "COMPLETED"
+        assert completed["attempt"] == 1
+
+        await asyncio.sleep(0)
+        assert not [
+            task
+            for task in asyncio.all_tasks()
+            if task.get_name().startswith("automl-worker-heartbeat-worker-renewing-")
+        ]
+        await store.close()
+
+    asyncio.run(scenario())
+
+
+def test_worker_cleans_up_handler_and_heartbeat_after_losing_fence(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        store = SqliteStore(tmp_path / "worker-heartbeat-fence.db")
+        run_id = await _create_job(store)
+        handler_started = asyncio.Event()
+        handler_cancelled = asyncio.Event()
+
+        async def handler(_job: dict[str, Any]):
+            handler_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                handler_cancelled.set()
+            return COMPLETE
+
+        worker = LocalExecutionWorker(
+            store,
+            handler,
+            worker_id="worker-lost-fence",
+            lease_seconds=0.06,
+        )
+        running = asyncio.create_task(worker.run_once())
+        await asyncio.wait_for(handler_started.wait(), timeout=1)
+        await store.wake_execution_job(run_id)
+
+        with pytest.raises(JobFenceError):
+            await asyncio.wait_for(running, timeout=1)
+        assert handler_cancelled.is_set()
+        await asyncio.sleep(0)
+        assert not [
+            task
+            for task in asyncio.all_tasks()
+            if task.get_name().startswith("automl-worker-heartbeat-worker-lost-fence-")
+        ]
+
+        ready = await store.get_execution_job(run_id)
+        assert ready is not None
+        assert ready["status"] == "READY"
+        assert ready["control_epoch"] == 1
+        assert ready["attempt"] == 0
+        await store.close()
+
+    asyncio.run(scenario())
+
+
 def test_stopped_worker_releases_lease_for_another_worker_to_reclaim(
     tmp_path: Path,
 ) -> None:
@@ -227,6 +333,12 @@ def test_stopped_worker_releases_lease_for_another_worker_to_reclaim(
 
         await worker_a.stop()
         assert handler_cancelled.is_set()
+        await asyncio.sleep(0)
+        assert not [
+            task
+            for task in asyncio.all_tasks()
+            if task.get_name().startswith("automl-worker-heartbeat-worker-a-")
+        ]
         after_stop = await store.get_execution_job(run_id)
         assert after_stop is not None
         assert after_stop["status"] == "RETRY"

@@ -32,6 +32,15 @@ ACTIVE_OPERATION_IDS = (
     "getRunResult",
     "getArtifact",
     "createArtifactDownloadTicket",
+    "createWebhookEndpoint",
+    "listWebhookEndpoints",
+    "getWebhookEndpoint",
+    "deleteWebhookEndpoint",
+    "rotateWebhookEndpointSecret",
+    "enableWebhookEndpoint",
+    "listWebhookDeliveries",
+    "getWebhookDelivery",
+    "redeliverWebhookDelivery",
 )
 
 HTTP_METHODS = frozenset({"get", "put", "post", "delete", "options", "head", "patch", "trace"})
@@ -125,6 +134,11 @@ def render_agent_contract(canonical: str) -> str:
     """Filter the canonical contract to the allowlisted, currently implemented operations."""
 
     prefix, paths_body, components = _contract_sections(canonical)
+    webhook_marker = "\nwebhooks:\n"
+    webhook_contract = ""
+    if webhook_marker in paths_body:
+        paths_body, webhook_body = paths_body.split(webhook_marker, 1)
+        webhook_contract = webhook_marker + webhook_body
     path_preamble, path_entries = _path_entries(paths_body)
     wanted = set(ACTIVE_OPERATION_IDS)
     selected: dict[str, OperationLocation] = {}
@@ -166,7 +180,9 @@ def render_agent_contract(canonical: str) -> str:
     )
     if active_prefix == prefix:
         raise ValueError("canonical info.title changed; update the generator deliberately")
-    return GENERATED_NOTICE + active_prefix + "".join(rendered_paths) + components
+    return (
+        GENERATED_NOTICE + active_prefix + "".join(rendered_paths) + webhook_contract + components
+    )
 
 
 def _parser() -> argparse.ArgumentParser:

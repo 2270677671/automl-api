@@ -135,7 +135,11 @@ class LocalExecutionWorker:
             lease_generation = int(job["lease_generation"])
             control_epoch = int(job["control_epoch"])
             try:
-                result = await self.handler(job)
+                result = await self._run_handler_with_lease_heartbeat(
+                    job,
+                    lease_generation=lease_generation,
+                    control_epoch=control_epoch,
+                )
                 if not isinstance(result, (CheckpointResult, CompleteResult)):
                     raise TypeError("worker handler must return CHECKPOINT(...) or COMPLETE")
             except asyncio.CancelledError:
@@ -151,6 +155,8 @@ class LocalExecutionWorker:
                     updated = None
                 if updated is not None and updated["status"] == "DEAD" and self.on_dead is not None:
                     await self.on_dead(updated)
+                raise
+            except JobFenceError:
                 raise
             except Exception as exc:
                 delay_seconds = self._retry_delay(attempt)
@@ -181,6 +187,57 @@ class LocalExecutionWorker:
                     next_status=result.status,
                 )
             return True
+
+    async def _run_handler_with_lease_heartbeat(
+        self,
+        job: ExecutionJob,
+        *,
+        lease_generation: int,
+        control_epoch: int,
+    ) -> WorkerResult:
+        run_id = str(job["run_id"])
+        handler_job = {**job, "_lease_seconds": self.lease_seconds}
+        handler_task = asyncio.create_task(
+            self.handler(handler_job),
+            name=f"automl-worker-handler-{self.worker_id}-{run_id}",
+        )
+        heartbeat_task = asyncio.create_task(
+            self._renew_lease_until_cancelled(
+                run_id,
+                lease_generation=lease_generation,
+                control_epoch=control_epoch,
+            ),
+            name=f"automl-worker-heartbeat-{self.worker_id}-{run_id}",
+        )
+        tasks = {handler_task, heartbeat_task}
+        try:
+            done, _pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            if heartbeat_task in done:
+                await heartbeat_task
+                raise RuntimeError("execution job lease heartbeat stopped unexpectedly")
+            return await handler_task
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _renew_lease_until_cancelled(
+        self,
+        run_id: str,
+        *,
+        lease_generation: int,
+        control_epoch: int,
+    ) -> None:
+        interval = self.lease_seconds / 3.0
+        while True:
+            await asyncio.sleep(interval)
+            await self.store.renew_execution_job(
+                run_id,
+                lease_generation=lease_generation,
+                control_epoch=control_epoch,
+                lease_seconds=self.lease_seconds,
+            )
 
     def _retry_delay(self, attempt: int) -> float:
         if self.retry_base_seconds == 0 or self.retry_max_seconds == 0:

@@ -127,7 +127,7 @@ stateDiagram-v2
 | `POST` | `/v1/artifacts/{id}:download` | `createArtifactDownloadTicket` | 可用 | 可用 |
 | `GET` | `/v1/artifact-downloads/{token}` | 非 OpenAPI | 可用 | 可用 |
 | `GET` | `/v1/models/{id}` | `getModelCandidate` | 可用，审批通过后有资源 | 返回已注册候选模型 |
-| `POST/GET/DELETE` | `/v1/webhook-endpoints...` | 多个 Webhook operation | 可用，HTTP dispatcher 为独立 worker | 完整 Webhook 管理 |
+| `POST/GET/DELETE` | `/v1/webhook-endpoints...` | 多个 Webhook operation | 可用，HTTP dispatcher 为进程内 durable worker | 完整 Webhook 管理 |
 | `DELETE` | `/v1/datasets/{id}` | `deleteDataset` | 可用 | 启动删除 saga |
 | `GET` | `/v1/deletions/{id}` | `getDeletionJob` | 可用 | 查询删除任务 |
 
@@ -265,7 +265,7 @@ API 不提供：
 
 ## 11. Webhook 生产设计
 
-Webhook endpoint 与 outbox 路由已在 0.8.0 实现。实际 HTTP 投递和重试由独立 dispatcher worker
+Webhook endpoint、outbox 路由与实际 HTTP 投递已实现。单节点 profile 由 API 进程内 dispatcher worker
 负责；正式部署必须满足以下行为：
 
 - endpoint 创建时返回一次性 `signing_secret`。

@@ -447,8 +447,12 @@ class InMemoryStore:
         tenant_id = run.get("tenant_id")
         event_type = event.get("type")
         occurred_at = event.get("occurred_at")
-        for endpoint in self._webhook_endpoints.values():
-            if endpoint.get("tenant_id") != tenant_id or endpoint.get("status") != "ACTIVE":
+        selected_endpoint_ids = set(run.get("webhook_endpoint_ids") or [])
+        for endpoint_id in selected_endpoint_ids:
+            endpoint = self._webhook_endpoints.get(str(endpoint_id))
+            if endpoint is None:
+                continue
+            if endpoint.get("tenant_id") != tenant_id or endpoint.get("status") == "DISABLED":
                 continue
             event_types = set(endpoint.get("event_types") or [])
             if "*" not in event_types and event_type not in event_types:
@@ -524,6 +528,64 @@ class InMemoryStore:
         if created:
             self._schedule_notifications(conditions)
         return stored_run, stored_event
+
+    async def finalize_run_with_result(
+        self,
+        run_id: str,
+        *,
+        result: Mapping[str, Any],
+        run_updates: Mapping[str, Any],
+        events: Iterable[Mapping[str, Any]],
+        expected_revision: int | None = None,
+    ) -> tuple[JsonDict, JsonDict, list[JsonDict]]:
+        """Commit immutable result, terminal Run, events, and outbox as one mutation."""
+
+        notifications: list[tuple[asyncio.AbstractEventLoop, asyncio.Condition]] = []
+        with self._lock:
+            current = self._runs.get(run_id)
+            if current is None:
+                raise ResourceNotFoundError("run", run_id)
+            revision = int(current.get("run_revision", 1))
+            if expected_revision is not None and expected_revision != revision:
+                raise RevisionConflictError(expected_revision, revision)
+
+            stored_result = self._mapping(result, name="result")
+            supplied_run_id = stored_result.get("run_id")
+            if supplied_run_id is not None and supplied_run_id != run_id:
+                raise ValueError("result.run_id does not match its parent run")
+            stored_result["run_id"] = run_id
+            stored_result.setdefault(
+                "result_manifest_id", self._new_id_locked(self._ID_PREFIXES["result"])
+            )
+            existing_result = self._results.get(run_id)
+            if existing_result is not None and existing_result != stored_result:
+                raise ResourceAlreadyExistsError("result", run_id)
+            self._results[run_id] = stored_result
+
+            patch = self._mapping(run_updates, name="run updates")
+            supplied_id = patch.pop("run_id", run_id)
+            if supplied_id != run_id:
+                raise ValueError("run.run_id cannot be changed")
+            patch.pop("run_revision", None)
+            patch.pop("snapshot_seq", None)
+            current.update(patch)
+            current["run_revision"] = revision + 1
+
+            stored_events: list[JsonDict] = []
+            for value in events:
+                event_value = self._mapping(value, name="event")
+                event_value["run_revision"] = current["run_revision"]
+                stored_event, created = self._append_event_locked(run_id, event_value)
+                stored_events.append(stored_event)
+                if created:
+                    self._append_webhook_deliveries_locked(stored_event)
+                    notifications.extend(self._event_conditions_for_run_locked(run_id))
+
+            stored_run = deepcopy(current)
+            stored_result_copy = deepcopy(stored_result)
+        if notifications:
+            self._schedule_notifications(notifications)
+        return stored_run, stored_result_copy, stored_events
 
     async def get_events(
         self,

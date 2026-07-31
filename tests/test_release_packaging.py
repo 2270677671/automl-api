@@ -4,6 +4,7 @@ import hashlib
 import json
 import subprocess
 import tarfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ from scripts.package_release import (
     _normalize_platform,
     _read_version,
     _save_docker_images,
+    _verify_wheel_contents,
     _write_metadata,
 )
 
@@ -99,6 +101,19 @@ def test_project_version_is_read_from_pyproject(tmp_path: Path) -> None:
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text('[project]\nname = "example"\nversion = "1.2.3"\n', encoding="utf-8")
     assert _read_version(pyproject) == "1.2.3"
+
+
+def test_release_rejects_wheels_containing_python_cache_files(tmp_path: Path) -> None:
+    clean = tmp_path / "clean.whl"
+    dirty = tmp_path / "dirty.whl"
+    with zipfile.ZipFile(clean, "w") as archive:
+        archive.writestr("automl_sdk/client.py", "")
+    with zipfile.ZipFile(dirty, "w") as archive:
+        archive.writestr("automl_sdk/__pycache__/client.cpython-312.pyc", b"generated")
+
+    _verify_wheel_contents(clean)
+    with pytest.raises(ReleaseError, match="generated Python cache"):
+        _verify_wheel_contents(dirty)
 
 
 def test_default_archive_path_preserves_the_full_bundle_name(tmp_path: Path) -> None:

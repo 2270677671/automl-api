@@ -33,6 +33,27 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--backend", choices=("sklearn", "autogluon", "tabpfn"), default="sklearn")
     parser.add_argument("--target", default="churned")
+    parser.add_argument(
+        "--task-type",
+        choices=("BINARY_CLASSIFICATION", "REGRESSION"),
+        default="BINARY_CLASSIFICATION",
+    )
+    parser.add_argument(
+        "--primary-metric",
+        help="defaults to roc_auc for classification and rmse for regression",
+    )
+    parser.add_argument("--callback-url", help="optional HTTPS stage callback URL")
+    parser.add_argument(
+        "--webhook-endpoint-id",
+        action="append",
+        default=[],
+        help="bind an existing Webhook endpoint; may be repeated",
+    )
+    parser.add_argument(
+        "--preconfirm-objective",
+        action="store_true",
+        help="send target and i.i.d. confirmation at Run creation instead of waiting for a human",
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("example-output"))
     parser.add_argument("--timeout", type=float, default=1200)
     parser.add_argument("--ca", type=Path, default=os.environ.get("AUTOML_CA_FILE"))
@@ -77,8 +98,10 @@ def _idempotency(prefix: str) -> dict[str, str]:
     return {"Idempotency-Key": f"example-{prefix}-{uuid4().hex}"}
 
 
-def _answers(packet: dict[str, Any], target: str) -> list[dict[str, Any]]:
-    supported = {"q_target": target, "q_iid": True, "q_positive_class": 1}
+def _answers(packet: dict[str, Any], target: str, task_type: str) -> list[dict[str, Any]]:
+    supported = {"q_target": target, "q_iid": True}
+    if task_type == "BINARY_CLASSIFICATION":
+        supported["q_positive_class"] = 1
     answers = []
     for question in packet["questions"]:
         question_id = question["question_id"]
@@ -91,6 +114,9 @@ def _answers(packet: dict[str, Any], target: str) -> list[dict[str, Any]]:
 def main() -> int:
     args = _parser().parse_args()
     base_url = args.base_url.rstrip("/")
+    primary_metric = args.primary_metric or (
+        "roc_auc" if args.task_type == "BINARY_CLASSIFICATION" else "rmse"
+    )
     token = os.environ.get("AUTOML_TOKEN", "")
     if not token:
         raise SystemExit(
@@ -154,6 +180,35 @@ def main() -> int:
             },
         ).json()
 
+        run_payload = {
+            "dataset_version_id": dataset["dataset_version_id"],
+            "objective": {
+                "backend_id": args.backend,
+                "target_column": args.target if args.preconfirm_objective else None,
+                "task_type": args.task_type,
+                "positive_class": (1 if args.task_type == "BINARY_CLASSIFICATION" else None),
+                "iid_confirmed": True if args.preconfirm_objective else None,
+                "primary_metric": primary_metric,
+                "business_context": "synthetic repository HTTP example",
+            },
+            "autonomy": {"mode": "GUIDED", "production_deploy": "DISABLED"},
+            "policy": {
+                "allow_pii": False,
+                "allow_external_llm": False,
+                "risk_tier": "STANDARD",
+            },
+            "budget": {
+                "max_trials": 2 if args.backend == "sklearn" else 1,
+                "max_compute_credits": 1,
+                "max_wall_time_seconds": int(args.timeout),
+                "max_llm_tokens": 0,
+            },
+        }
+        if args.callback_url:
+            run_payload["callback_url"] = args.callback_url
+        if args.webhook_endpoint_id:
+            run_payload["webhook_endpoint_ids"] = args.webhook_endpoint_id
+
         run = _request(
             client,
             "POST",
@@ -161,30 +216,7 @@ def main() -> int:
             token,
             {202},
             headers=_idempotency("run"),
-            json={
-                "dataset_version_id": dataset["dataset_version_id"],
-                "objective": {
-                    "backend_id": args.backend,
-                    "target_column": None,
-                    "task_type": "BINARY_CLASSIFICATION",
-                    "positive_class": 1,
-                    "iid_confirmed": None,
-                    "primary_metric": "roc_auc",
-                    "business_context": "synthetic repository HTTP example",
-                },
-                "autonomy": {"mode": "GUIDED", "production_deploy": "DISABLED"},
-                "policy": {
-                    "allow_pii": False,
-                    "allow_external_llm": False,
-                    "risk_tier": "STANDARD",
-                },
-                "budget": {
-                    "max_trials": 2 if args.backend == "sklearn" else 1,
-                    "max_compute_credits": 1,
-                    "max_wall_time_seconds": int(args.timeout),
-                    "max_llm_tokens": 0,
-                },
-            },
+            json=run_payload,
         ).json()
         run_id = run["run_id"]
         answered = False
@@ -219,7 +251,7 @@ def main() -> int:
                         **_idempotency("answer"),
                         "If-Match": f'"{packet["wait_set_revision"]}"',
                     },
-                    json={"answers": _answers(packet, args.target)},
+                    json={"answers": _answers(packet, args.target, args.task_type)},
                 ).json()
                 command_id = receipt["command_id"]
                 while True:

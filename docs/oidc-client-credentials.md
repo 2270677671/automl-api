@@ -193,8 +193,22 @@ python examples/python/oauth_client_credentials.py
 - `aud=managed-automl-api`；
 - `tenant_id=partner_a`，实际部署应改成合作方唯一 tenant；
 - `actor_type=agent`；
-- 上传、Run、事件、Output、DecisionPacket 读取和 artifact 下载所需的精确 operation scopes；
+- 上传、Run、事件、Output、DecisionPacket 读取、artifact 下载和本 tenant Webhook 管理所需的精确
+  operation scopes；
 - 不包含 `decideApproval`，也不能绕过 `HUMAN_REQUIRED`。
+
+Webhook 权限包含 `createWebhookEndpoint`、`listWebhookEndpoints`、`getWebhookEndpoint`、
+`deleteWebhookEndpoint`、`rotateWebhookEndpointSecret`、`enableWebhookEndpoint`、
+`listWebhookDeliveries`、`getWebhookDelivery` 和 `redeliverWebhookDelivery`。这些 scope 只允许主体
+操作 token 中 `tenant_id` 对应的资源，不能跨 tenant 读取或修改 endpoint、secret 和 delivery。
+机器客户端同时包含 `deleteDataset` 和 `getDeletionJob`，便于 Agent 平台执行本 tenant 的
+数据生命周期清理并查询删除结果。这两个路由不放入 LLM 自动工具清单；平台应在用户授权、
+保留期策略或测试清理流程中直接调用 canonical API。
+
+`--import-realm` 只在 realm 不存在时导入初始化文件。已经持久化身份数据库的部署更新本仓库后，
+还必须由管理员在 Keycloak 中同步 `managed-automl-operation-scopes` mapper；仅重启 identity 容器不会
+覆盖现有 client。同步后签发一个新 token，并运行第 9 节验证脚本；脚本会在任一 Webhook scope 缺失
+时失败。旧 token 最多五分钟后过期，不能用于判断 mapper 是否已更新。
 
 `client_credentials` 代表机器主体，不代表人。Human 决策必须由组织身份平台的交互式登录、授权码
 加 PKCE 或受审计的 token exchange 产生 `actor_type=human` token。不得创建一个共享 human

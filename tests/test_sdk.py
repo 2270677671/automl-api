@@ -16,7 +16,7 @@ from automl_sdk import (
     PreconditionFailedError,
 )
 
-from .helpers import create_ready_dataset, create_waiting_run, run_request
+from .helpers import create_ready_dataset, run_request
 
 
 def test_sdk_completes_managed_workflow_in_a_small_call_surface(client: TestClient) -> None:
@@ -132,7 +132,14 @@ def test_sdk_exposes_production_control_plane_helpers(client: TestClient) -> Non
     assert rotated["webhook_endpoint_id"] == endpoint["webhook_endpoint_id"]
     assert sdk.list_webhook_endpoints()["items"]
 
-    create_waiting_run(client, "sdk-webhook-delivery-0001")
+    upload = create_ready_dataset(client, "sdk-webhook-delivery-0001")
+    request = run_request(upload["dataset_version_id"])
+    sdk.create_run(
+        request,
+        callback_url=endpoint["url"],
+        webhook_endpoint_ids=[endpoint["webhook_endpoint_id"]],
+        idempotency_key="sdk-webhook-run-0001",
+    )
     deliveries = sdk.list_webhook_deliveries(endpoint["webhook_endpoint_id"])
     delivery = deliveries["items"][0]
     assert (

@@ -57,6 +57,8 @@ def test_agent_manifest_declares_an_external_planner_without_an_internal_llm(
     assert tabpfn_attributions == ["Built with PriorLabs-TabPFN"]
     assert backends["sklearn"]["artifact"]["serialization"] == "joblib"
     assert "internal_llm_planning" in body["unsupported_capabilities"]
+    assert "evaluation_visualizations" in body["supported_capabilities"]
+    assert "built_in_webhook_http_delivery" in body["supported_capabilities"]
     assert body["runtime_limits"]["max_trials_per_run"] >= 2
     sklearn_backend = next(
         backend for backend in body["backends"] if backend["backend_id"] == "sklearn"
@@ -68,7 +70,7 @@ def test_agent_manifest_declares_an_external_planner_without_an_internal_llm(
     assert body["canonical_operation_ids"] == list(CANONICAL_OPERATION_IDS)
     assert body["active_operation_ids"] == list(ACTIVE_AGENT_OPERATION_IDS)
     assert set(body["operation_scopes"]) == set(CANONICAL_OPERATION_IDS)
-    assert "built_in_webhook_http_delivery" in body["unsupported_capabilities"]
+    assert "built_in_webhook_http_delivery" not in body["unsupported_capabilities"]
     assert body["context_path_template"] == "/v1/runs/{run_id}/agent-context"
 
     tools_contract = client.get("/v1/agent/tool-openapi.yaml", headers=AUTH)

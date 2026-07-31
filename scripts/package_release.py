@@ -20,6 +20,7 @@ import sys
 import tarfile
 import tempfile
 import tomllib
+import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterable
@@ -117,11 +118,33 @@ def _wheel_candidates(directory: Path, prefix: str, version: str) -> list[Path]:
     )
 
 
+def _verify_wheel_contents(*wheels: Path) -> None:
+    for wheel in wheels:
+        try:
+            with zipfile.ZipFile(wheel) as archive:
+                generated = [
+                    name
+                    for name in archive.namelist()
+                    if "__pycache__" in Path(name).parts or name.endswith((".pyc", ".pyo"))
+                ]
+        except (OSError, zipfile.BadZipFile) as error:
+            raise ReleaseError(f"Wheel is not a readable ZIP archive: {wheel}") from error
+        if generated:
+            raise ReleaseError(
+                f"Wheel contains generated Python cache files: {wheel.name}: {generated[0]}"
+            )
+
+
 def _build_wheels(python: str, version: str, destination: Path) -> tuple[Path, Path]:
     api_output = destination / "api-build"
     sdk_output = destination / "sdk-build"
     api_output.mkdir(parents=True)
     sdk_output.mkdir(parents=True)
+    # Setuptools reuses build/lib and can otherwise carry deleted or generated files into a wheel.
+    for project_root in (ROOT, ROOT / "packages" / "python_sdk"):
+        build_directory = project_root / "build"
+        if build_directory.is_dir():
+            shutil.rmtree(build_directory)
     build_environment = os.environ.copy()
     build_environment.setdefault(
         "PIP_INDEX_URL",
@@ -141,6 +164,7 @@ def _build_wheels(python: str, version: str, destination: Path) -> tuple[Path, P
     sdk = _wheel_candidates(sdk_output, "automl_sdk", version)
     if len(api) != 1 or len(sdk) != 1:
         raise ReleaseError("Wheel build did not produce exactly one API and one SDK wheel")
+    _verify_wheel_contents(api[0], sdk[0])
     return api[0], sdk[0]
 
 
@@ -152,6 +176,7 @@ def _existing_wheels(version: str) -> tuple[Path, Path]:
             "--skip-build requires one API wheel in dist/ and one SDK wheel in "
             "packages/python_sdk/dist/"
         )
+    _verify_wheel_contents(api[0], sdk[0])
     return api[0], sdk[0]
 
 

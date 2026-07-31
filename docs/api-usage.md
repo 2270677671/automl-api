@@ -7,7 +7,8 @@
 > 服务：development profile 的 Bearer token 只用于本地租户隔离，模型 artifact 默认仅供离线评估。
 > API 已提供 Webhook endpoint/outbox、审批、模型候选和删除任务控制面。local durable 删除会同步
 > 撤销访问并物理删除本地 dataset/upload 与派生 artifact 字节；正式环境仍需部署 OIDC、
-> PostgreSQL/RLS、S3/KMS、DLP、Webhook dispatcher 及外部存储的异步物理删除 worker。
+> PostgreSQL/RLS、S3/KMS、DLP、多副本分布式 Webhook dispatcher 及外部存储的异步物理删除
+> worker。单节点 profile 已内置进程内 durable Webhook dispatcher。
 
 ## 0. 快速开始
 
@@ -145,9 +146,19 @@ curl -sS -X POST "$AUTOML_API/v1/runs" \
       "max_compute_credits": 1,
       "max_wall_time_seconds": 3600,
       "max_llm_tokens": 0
-    }
+    },
+    "callback_url": "https://agent.example.com/automl/callback",
+    "webhook_endpoint_ids": ["wh_123"]
   }'
 ```
+
+`callback_url` 可选，但不能是未经注册的裸地址。先用 `POST /v1/webhook-endpoints` 注册 URL，
+安全保存只返回一次的 `signing_secret`，再把完全相同的 URL 和 endpoint ID 传给创建 Run。
+两者不一致返回 `422`；未指定时该 Run 不产生 webhook delivery，避免同租户不同 Agent 应用串流。
+生产默认只允许 HTTPS 公网目的地址；确需内网 callback 时，由部署方在
+`AUTOML_WEBHOOK_ALLOWED_CIDRS` 中显式加入最小 CIDR。每次发送前仍会重新解析并校验目的 IP，
+实际连接固定到该已校验 IP，同时保留原始 Host、TLS SNI 和证书主机名校验；
+不跟随重定向，也不读取环境代理。
 
 `objective.backend_id` 可省略；此时使用 manifest 的 `default_backend_id`。AutoGluon、TabPFN 等
 标准后端如果列在 `backends[]` 但状态为 `UNAVAILABLE`，调用方应展示 `unavailable_reason` 并改选其他
@@ -185,6 +196,7 @@ curl -sS "$AUTOML_API/v1/runs/run_01/events?after_seq=17&limit=100" \
 当前 durable workflow 会发出这些事件（实验指标事件仍是后续实现预留类型）：
 
 - `run.phase_changed.v1`
+- `run.stage_completed.v1`：`INGEST`、`PROFILE`、`PLAN`、`TRAIN`、`EVALUATE`、`PACKAGE`
 - `output.committed.v1`
 - `decision_packet.requested.v1`
 - `run.completed.v1` / `run.failed.v1` / `run.canceled.v1` / `run.expired.v1`
@@ -202,6 +214,11 @@ curl -sS "$AUTOML_API/v1/runs/run_01/outputs/out_42" \
 curl -sS "$AUTOML_API/v1/runs/run_01/outputs?type=DATA_QUALITY_REPORT,TRIAL_RESULT,EVALUATION_REPORT&limit=50" \
   -H "Authorization: Bearer $AUTOML_TOKEN"
 ```
+
+训练完成后，`EVALUATION_REPORT.payload.visualizations[]` 给出每张图的生成状态，成功图同时
+出现在该 output 的 `artifact_refs[]` 和终态 `RunResult.visualization_refs[]`。二分类默认包含
+指标对比、混淆矩阵、ROC、PR 和条件性校准曲线；回归默认包含指标对比、观测值-预测值、
+残差-预测值和残差分布。图片为聚合 PNG，不在 JSON 或 callback 中返回逐行预测。
 
 ## 4. 回答阻塞问题
 
@@ -677,9 +694,8 @@ curl -sS -X POST "$AUTOML_API/v1/runs/run_01/decision-packets/ws_01:answer" \
 ## 13. Webhook endpoint 与 outbox
 
 Webhook endpoint 创建、读取、删除、密钥轮换、启用、delivery outbox 查询和人工重投已经可调用。
-当前 API 负责维护 outbox 记录；实际向接收端发起 HTTP 请求、依据响应更新 attempt、退避和告警，
-需要由独立 dispatcher worker 在生产部署中执行。下面的签名规则是 dispatcher 与接收方的互操作
-约定。
+API 进程内的 durable worker 会实际发送 HTTP 回调，并依据响应更新 attempt、退避和熔断状态。
+回调失败不改变 AutoML Run 结果；接收方应按 delivery ID 幂等并用事件分页/SSE 补偿。
 
 注册 Webhook 时，签名密钥只在创建响应中返回一次：
 
@@ -690,7 +706,7 @@ curl -sS -X POST "$AUTOML_API/v1/webhook-endpoints" \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://example.internal/automl-events",
-    "event_types": ["output.committed.v1", "decision_packet.requested.v1", "run.completed.v1", "run.failed.v1", "run.canceled.v1", "run.expired.v1"]
+    "event_types": ["run.stage_completed.v1", "decision_packet.requested.v1", "run.completed.v1", "run.failed.v1", "run.canceled.v1", "run.expired.v1"]
   }'
 ```
 
@@ -742,9 +758,10 @@ curl -sS "$AUTOML_API/v1/webhook-endpoints/wh_01/deliveries?status=RETRYING,EXHA
   -H "Authorization: Bearer $AUTOML_TOKEN"
 ```
 
-生产 dispatcher 应在非 2xx 或 10 秒超时时按 full-jitter 指数退避，最多 20 次或 72 小时。耗尽后
+内置 dispatcher 在非 2xx 或 10 秒超时时按 full-jitter 指数退避，最多 12 次或 72 小时。耗尽后
 `EXHAUSTED` 是租户可查询的死信记录，不另设隐藏 DLQ，并在 `exhausted_at` 后保留、允许人工重投
-30 天。连续 20 次 attempt 失败后，dispatcher 应将 endpoint 置为 `PAUSED_DELIVERY_FAILURES`，新事件
+30 天（由 `AUTOML_WEBHOOK_REDELIVERY_RETENTION_DAYS` 独立配置）。单个 delivery 耗尽后，
+dispatcher 将 endpoint 置为 `PAUSED_DELIVERY_FAILURES`，新事件
 保留为 `PENDING`。修复接收端后恢复投递：
 
 ```bash
@@ -753,9 +770,11 @@ curl -sS -X POST "$AUTOML_API/v1/webhook-endpoints/wh_01:enable" \
   -H "Idempotency-Key: enable-wh-01-0001"
 ```
 
-恢复会继续 `PENDING`，但不会自动重放 `EXHAUSTED`。
+恢复会继续 `PENDING`，但不会自动重放 `EXHAUSTED`。已耗尽的旧记录不会占住
+同一 Run 的队首；其他未完成记录仍会按创建顺序投递。
 
-修复接收端后，可请求重投。重投增加 attempt，但保持原 delivery ID：
+修复接收端后，可在 `redeliver_until` 之前请求重投；过期返回
+`410 webhook_redelivery_expired`。下次真实发送时增加 attempt，但保持原 delivery ID：
 
 ```bash
 curl -sS -X POST "$AUTOML_API/v1/webhook-endpoints/wh_01/deliveries/whd_01:redeliver" \

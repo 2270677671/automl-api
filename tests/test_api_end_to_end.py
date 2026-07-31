@@ -229,6 +229,17 @@ def test_pause_resume_stale_revision_and_cancel_without_if_match(client: TestCli
     packets = client.get(f"/v1/runs/{run_id}/decision-packets", headers=AUTH).json()["items"]
     assert all(packet["status"] != "OPEN" for packet in packets)
     assert client.get(f"/v1/runs/{run_id}/result", headers=AUTH).json()["outcome"] == "CANCELED"
+    canceled_events = client.get(
+        f"/v1/runs/{run_id}/events",
+        headers={**AUTH, "Accept": "application/json"},
+        params={"types": "run.canceled.v1", "limit": 100},
+    ).json()["items"]
+    assert len(canceled_events) == 1
+    assert canceled_events[0]["run_revision"] == snapshot["run_revision"]
+    assert canceled_events[0]["payload"] == {
+        "outcome": "CANCELED",
+        "result_href": f"/v1/runs/{run_id}/result",
+    }
     new_cancel = client.post(
         f"/v1/runs/{run_id}:cancel", headers=mutation_headers("new-cancel-key-0001")
     )

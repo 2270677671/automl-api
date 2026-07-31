@@ -294,14 +294,16 @@ def _dlp_check(source: Mapping[str, str], *, required: bool) -> ProductionCheck:
 
 def _webhook_check(source: Mapping[str, str], *, required: bool) -> ProductionCheck:
     dispatch_mode = source.get("AUTOML_WEBHOOK_DISPATCH_MODE", "").strip().lower()
-    ok = dispatch_mode == "outbox" and _enabled(source.get("AUTOML_WEBHOOK_SIGNING_REQUIRED"))
+    ok = dispatch_mode in {"builtin", "http"} and _enabled(
+        source.get("AUTOML_WEBHOOK_SIGNING_REQUIRED")
+    )
     return ProductionCheck(
         "webhook_outbox",
         ok,
         (
-            "The durable webhook outbox and signing-secret contract are configured; this service does not dispatch HTTP callbacks."
+            "The durable webhook outbox, HMAC signing, and in-process HTTP dispatcher are configured."
             if ok
-            else "Set AUTOML_WEBHOOK_DISPATCH_MODE=outbox and AUTOML_WEBHOOK_SIGNING_REQUIRED=true; HTTP delivery requires an external dispatcher."
+            else "Set AUTOML_WEBHOOK_DISPATCH_MODE=builtin and AUTOML_WEBHOOK_SIGNING_REQUIRED=true."
         ),
         required=required,
     )

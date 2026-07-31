@@ -5,8 +5,12 @@ from pathlib import Path
 
 import pytest
 
+from automl_api.auth import Principal
+from automl_api.durable_workflow import DurableWorkflowService
 from automl_api.persistence import JobFenceError, SqliteStore
+from automl_api.storage import SyntheticBlobStore
 from automl_api.store import IdempotencyState
+from automl_api.workflow import WorkflowService, _stages
 
 
 async def _create_resource_graph(store: SqliteStore) -> dict[str, str]:
@@ -190,6 +194,318 @@ def test_execution_job_reclaims_expired_lease_and_fences_stale_workers(
 
         reopened = SqliteStore(database)
         assert (await reopened.get_execution_job(run_id))["status"] == "COMPLETED"
+        await reopened.close()
+
+    asyncio.run(scenario())
+
+
+def test_execution_job_renewal_is_fenced_and_cannot_overwrite_new_owner(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        store = SqliteStore(tmp_path / "job-renewal.db")
+        run = await store.create_run(
+            {"tenant_id": "tenant_1", "status": "QUEUED", "run_revision": 1}
+        )
+        run_id = str(run["run_id"])
+        await store.create_execution_job(run_id, workflow_step="TRAIN")
+
+        first = await store.claim_execution_job("worker-a", lease_seconds=0.05)
+        assert first is not None
+        await asyncio.sleep(0.02)
+        renewed = await store.renew_execution_job(
+            run_id,
+            lease_generation=int(first["lease_generation"]),
+            control_epoch=int(first["control_epoch"]),
+            lease_seconds=0.2,
+        )
+        assert renewed["status"] == "LEASED"
+        assert renewed["lease_owner"] == "worker-a"
+        assert renewed["lease_expires_at"] > first["lease_expires_at"]
+
+        await asyncio.sleep(0.06)
+        assert await store.claim_execution_job("worker-b", lease_seconds=1) is None
+
+        await store.wake_execution_job(run_id)
+        second = await store.claim_execution_job("worker-b", lease_seconds=1)
+        assert second is not None
+        second_expiry = second["lease_expires_at"]
+        with pytest.raises(JobFenceError):
+            await store.renew_execution_job(
+                run_id,
+                lease_generation=int(first["lease_generation"]),
+                control_epoch=int(first["control_epoch"]),
+                lease_seconds=30,
+            )
+
+        current = await store.get_execution_job(run_id)
+        assert current is not None
+        assert current["lease_owner"] == "worker-b"
+        assert current["lease_generation"] == second["lease_generation"]
+        assert current["control_epoch"] == second["control_epoch"]
+        assert current["lease_expires_at"] == second_expiry
+        await store.close()
+
+    asyncio.run(scenario())
+
+
+def test_terminal_result_events_and_webhook_outbox_commit_atomically(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        database = tmp_path / "atomic-finalize.db"
+        store = SqliteStore(database)
+        endpoint = await store.create_webhook_endpoint(
+            {
+                "tenant_id": "tenant_1",
+                "url": "https://callback.example.test/events",
+                "event_types": ["run.stage_completed.v1", "run.completed.v1"],
+                "status": "ACTIVE",
+                "signature_version": "v1",
+                "replay_window_seconds": 300,
+                "signing_secret": "A" * 43,
+                "created_at": "2026-07-31T00:00:00Z",
+            }
+        )
+        run = await store.create_run(
+            {
+                "tenant_id": "tenant_1",
+                "status": "RUNNING",
+                "phase": "PACKAGE",
+                "run_revision": 1,
+                "snapshot_seq": 0,
+                "webhook_endpoint_ids": [endpoint["webhook_endpoint_id"]],
+            }
+        )
+        run_id = run["run_id"]
+        events = [
+            {
+                "schema_version": "1.0",
+                "occurred_at": "2026-07-31T00:01:00Z",
+                "type": "run.stage_completed.v1",
+                "payload": {
+                    "phase": "PACKAGE",
+                    "status": "COMPLETED",
+                    "completed_at": "2026-07-31T00:01:00Z",
+                    "progress_percent": 100.0,
+                    "output_refs": [],
+                    "next_phase": None,
+                },
+            },
+            {
+                "schema_version": "1.0",
+                "occurred_at": "2026-07-31T00:01:00Z",
+                "type": "run.completed.v1",
+                "payload": {"outcome": "SUCCEEDED", "result_href": f"/v1/runs/{run_id}/result"},
+            },
+        ]
+        result = {
+            "run_id": run_id,
+            "outcome": "SUCCEEDED",
+            "summary": "atomic",
+            "completed_at": "2026-07-31T00:01:00Z",
+        }
+        updates = {"status": "TERMINAL", "outcome": "SUCCEEDED"}
+
+        original_write = store._write_checkpoint
+
+        def fail_checkpoint(*args, **kwargs):
+            raise OSError("synthetic final checkpoint failure")
+
+        store._write_checkpoint = fail_checkpoint
+        with pytest.raises(OSError, match="synthetic final checkpoint failure"):
+            await store.finalize_run_with_result(
+                run_id,
+                result=result,
+                run_updates=updates,
+                events=events,
+                expected_revision=1,
+            )
+        store._write_checkpoint = original_write
+
+        assert (await store.get_run(run_id))["status"] == "RUNNING"
+        assert await store.get_result(run_id) is None
+        assert await store.get_events(run_id) == []
+        assert await store.list_webhook_deliveries(endpoint["webhook_endpoint_id"]) == []
+
+        finalized, stored_result, stored_events = await store.finalize_run_with_result(
+            run_id,
+            result=result,
+            run_updates=updates,
+            events=events,
+            expected_revision=1,
+        )
+        assert finalized["status"] == "TERMINAL"
+        assert finalized["run_revision"] == 2
+        assert stored_result["outcome"] == "SUCCEEDED"
+        assert [item["type"] for item in stored_events] == [
+            "run.stage_completed.v1",
+            "run.completed.v1",
+        ]
+        deliveries = await store.list_webhook_deliveries(endpoint["webhook_endpoint_id"])
+        assert len(deliveries) == 2
+        assert {item["event_id"] for item in deliveries} == {
+            item["event_id"] for item in stored_events
+        }
+        await store.close()
+
+        reopened = SqliteStore(database)
+        assert (await reopened.get_run(run_id))["status"] == "TERMINAL"
+        assert (await reopened.get_result(run_id))["outcome"] == "SUCCEEDED"
+        assert len(await reopened.get_events(run_id)) == 2
+        assert len(await reopened.list_webhook_deliveries(endpoint["webhook_endpoint_id"])) == 2
+        await reopened.close()
+
+    asyncio.run(scenario())
+
+
+def test_failed_run_finalize_checkpoint_failure_rolls_back_terminal_bundle(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        database = tmp_path / "failed-finalize-rollback.db"
+        store = SqliteStore(database)
+        endpoint = await store.create_webhook_endpoint(
+            {
+                "tenant_id": "tenant_1",
+                "url": "https://callback.example.test/events",
+                "event_types": ["run.failed.v1"],
+                "status": "ACTIVE",
+                "signature_version": "v1",
+                "replay_window_seconds": 300,
+                "signing_secret": "B" * 43,
+                "created_at": "2026-07-31T00:00:00Z",
+            }
+        )
+        run = await store.create_run(
+            {
+                "tenant_id": "tenant_1",
+                "dataset_version_id": "dsv_1",
+                "status": "RUNNING",
+                "outcome": None,
+                "phase": "TRAIN",
+                "run_revision": 1,
+                "snapshot_seq": 0,
+                "latest_output_refs": [],
+                "blocking": {"decision_packet_ids": [], "approval_ids": []},
+                "available_actions": ["PAUSE", "CANCEL"],
+                "webhook_endpoint_ids": [endpoint["webhook_endpoint_id"]],
+            }
+        )
+        run_id = run["run_id"]
+        service = DurableWorkflowService(store, blob_store=SyntheticBlobStore())
+        original_write = store._write_checkpoint
+
+        def fail_terminal_checkpoint(snapshot, **kwargs):
+            if snapshot["runs"][run_id].get("status") == "TERMINAL":
+                raise OSError("synthetic failed-run checkpoint failure")
+            return original_write(snapshot, **kwargs)
+
+        store._write_checkpoint = fail_terminal_checkpoint
+        with pytest.raises(OSError, match="synthetic failed-run checkpoint failure"):
+            await service._fail_run(
+                run,
+                code="MODEL_TRAINING_FAILED",
+                message="Synthetic model failure.",
+                retriable=False,
+            )
+        store._write_checkpoint = original_write
+
+        rolled_back_run = await store.get_run(run_id)
+        assert rolled_back_run is not None
+        assert rolled_back_run["status"] == "RUNNING"
+        assert rolled_back_run["outcome"] is None
+        assert await store.get_result(run_id) is None
+        assert [event["type"] for event in await store.get_events(run_id)] == [
+            "output.committed.v1"
+        ]
+        assert await store.list_webhook_deliveries(endpoint["webhook_endpoint_id"]) == []
+        failure_outputs = await store.list_outputs(run_id=run_id)
+        assert [output["type"] for output in failure_outputs] == ["FAILURE_REPORT"]
+        await store.close()
+
+        reopened = SqliteStore(database)
+        reopened_run = await reopened.get_run(run_id)
+        assert reopened_run is not None and reopened_run["status"] == "RUNNING"
+        assert await reopened.get_result(run_id) is None
+        assert [event["type"] for event in await reopened.get_events(run_id)] == [
+            "output.committed.v1"
+        ]
+        assert await reopened.list_webhook_deliveries(endpoint["webhook_endpoint_id"]) == []
+        await reopened.close()
+
+    asyncio.run(scenario())
+
+
+def test_cancel_finalize_checkpoint_failure_rolls_back_terminal_bundle(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        database = tmp_path / "cancel-finalize-rollback.db"
+        store = SqliteStore(database)
+        endpoint = await store.create_webhook_endpoint(
+            {
+                "tenant_id": "tenant_1",
+                "url": "https://callback.example.test/events",
+                "event_types": ["run.canceled.v1"],
+                "status": "ACTIVE",
+                "signature_version": "v1",
+                "replay_window_seconds": 300,
+                "signing_secret": "C" * 43,
+                "created_at": "2026-07-31T00:00:00Z",
+            }
+        )
+        run = await store.create_run(
+            {
+                "tenant_id": "tenant_1",
+                "dataset_version_id": "dsv_1",
+                "status": "RUNNING",
+                "outcome": None,
+                "phase": "PLAN",
+                "run_revision": 1,
+                "snapshot_seq": 0,
+                "stages": _stages(
+                    active_phase="PLAN", active_status="RUNNING", completed={"INGEST"}
+                ),
+                "latest_output_refs": [],
+                "blocking": {"decision_packet_ids": [], "approval_ids": []},
+                "available_actions": ["PAUSE", "CANCEL"],
+                "webhook_endpoint_ids": [endpoint["webhook_endpoint_id"]],
+            }
+        )
+        run_id = run["run_id"]
+        service = WorkflowService(store, blob_store=SyntheticBlobStore())
+        principal = Principal(subject="agent_1", tenant_id="tenant_1")
+        original_write = store._write_checkpoint
+
+        def fail_terminal_checkpoint(snapshot, **kwargs):
+            if snapshot["runs"][run_id].get("status") == "TERMINAL":
+                raise OSError("synthetic cancel checkpoint failure")
+            return original_write(snapshot, **kwargs)
+
+        store._write_checkpoint = fail_terminal_checkpoint
+        with pytest.raises(OSError, match="synthetic cancel checkpoint failure"):
+            await service.cancel(principal, run_id)
+        store._write_checkpoint = original_write
+
+        rolled_back = await store.get_run(run_id)
+        assert rolled_back is not None and rolled_back["status"] == "RUNNING"
+        assert await store.get_result(run_id) is None
+        assert await store.get_events(run_id) == []
+        assert await store.list_webhook_deliveries(endpoint["webhook_endpoint_id"]) == []
+
+        await service.cancel(principal, run_id)
+        terminal = await store.get_run(run_id)
+        assert terminal is not None and terminal["status"] == "TERMINAL"
+        assert (await store.get_result(run_id))["outcome"] == "CANCELED"
+        events = await store.get_events(run_id)
+        assert [event["type"] for event in events] == ["run.canceled.v1"]
+        assert events[0]["run_revision"] == terminal["run_revision"]
+        deliveries = await store.list_webhook_deliveries(endpoint["webhook_endpoint_id"])
+        assert len(deliveries) == 1
+        assert deliveries[0]["event_id"] == events[0]["event_id"]
+        await store.close()
+
+        reopened = SqliteStore(database)
+        assert (await reopened.get_run(run_id))["status"] == "TERMINAL"
+        assert (await reopened.get_result(run_id))["outcome"] == "CANCELED"
+        assert len(await reopened.get_events(run_id)) == 1
         await reopened.close()
 
     asyncio.run(scenario())

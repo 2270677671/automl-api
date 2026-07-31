@@ -8,6 +8,7 @@ import sklearn
 
 from ..ml_engine import (
     ENGINE_VERSION,
+    ExecutionStageCallback,
     Source,
     TabularAutoMLResult,
     TaskType,
@@ -52,6 +53,7 @@ class SklearnBackend:
         max_categories: int = 128,
         max_trials: int | None = None,
         max_wall_time_seconds: int | None = None,
+        stage_callback: ExecutionStageCallback | None = None,
     ) -> TabularAutoMLResult:
         del max_wall_time_seconds
         return run_tabular_automl(
@@ -67,6 +69,7 @@ class SklearnBackend:
             cv_folds=cv_folds,
             max_categories=max_categories,
             max_trials=max_trials,
+            stage_callback=stage_callback,
         )
 
 

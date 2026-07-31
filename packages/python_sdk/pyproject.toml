@@ -17,6 +17,7 @@ dependencies = [
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["automl_sdk*"]
+exclude = ["automl_sdk.__pycache__", "automl_sdk.__pycache__.*"]
 
 [tool.setuptools.package-data]
 automl_sdk = ["py.typed"]

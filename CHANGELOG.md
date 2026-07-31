@@ -25,6 +25,13 @@ Semantic Versioning for the public HTTP and Python SDK contracts.
 - Added a deployable Keycloak/PostgreSQL identity overlay, OAuth2 client-credentials token
   acquisition and automatic SDK renewal, internal JWKS verification, an identity backup sidecar,
   and a non-secret-bearing production verification command.
+- Added aggregated classification/regression evaluation plots for sklearn, AutoGluon, and
+  TabPFN, exposed through evaluation outputs and final result artifact references.
+- Added Run-bound HTTPS callbacks at six durable workflow boundaries, with HMAC signatures,
+  SSRF/DNS-rebinding protection, retry, circuit breaking, and 30-day manual redelivery.
+- Added worker lease heartbeats, fenced stale-worker writes, atomic terminal checkpoints, and
+  idempotent EVALUATE/PACKAGE recovery; fixed bodyless 204/205/304 idempotency replay responses.
+- Hardened release packaging against stale build output and generated Python cache files.
 
 ## 0.7.0 - 2026-07-24
 

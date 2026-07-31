@@ -15,7 +15,7 @@ import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Sequence
+from typing import Any, Callable, Literal, Sequence
 
 import joblib
 import numpy as np
@@ -54,6 +54,13 @@ from sklearn.model_selection import (
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from threadpoolctl import threadpool_limits
+
+from .visualization import (
+    EvaluationVisualization,
+    HoldoutEvaluation,
+    render_evaluation_visualizations,
+    visualization_status,
+)
 
 
 TaskType = Literal["BINARY_CLASSIFICATION", "REGRESSION"]
@@ -154,6 +161,7 @@ class TabularAutoMLResult:
     model_metadata: dict[str, Any]
     model_bytes: bytes
     report_bytes: bytes
+    visualizations: tuple[EvaluationVisualization, ...] = ()
 
     def structured(self) -> dict[str, Any]:
         """Return JSON-compatible records without embedding artifact bytes."""
@@ -195,6 +203,9 @@ class PreparedTabularData:
     profile: dict[str, Any]
     task: dict[str, Any]
     split: dict[str, Any]
+
+
+ExecutionStageCallback = Callable[[str, dict[str, Any]], None]
 
 
 @dataclass(frozen=True)
@@ -337,6 +348,7 @@ def run_tabular_automl(
     cv_folds: int = 3,
     max_categories: int = 128,
     max_trials: int | None = None,
+    stage_callback: ExecutionStageCallback | None = None,
 ) -> TabularAutoMLResult:
     """Run the bounded scikit-learn tabular engine."""
 
@@ -354,11 +366,14 @@ def run_tabular_automl(
         max_categories=max_categories,
         max_trials=max_trials,
     )
+    if stage_callback is not None:
+        stage_callback("PLAN", {"task": prepared.task, "split": prepared.split})
 
     with threadpool_limits(limits=1):
         return _execute(
             prepared,
             max_trials=max_trials,
+            stage_callback=stage_callback,
         )
 
 
@@ -531,6 +546,7 @@ def _execute(
     prepared: PreparedTabularData,
     *,
     max_trials: int | None,
+    stage_callback: ExecutionStageCallback | None = None,
 ) -> TabularAutoMLResult:
     dataset_sha256 = prepared.dataset_sha256
     target_column = prepared.target_column
@@ -650,12 +666,21 @@ def _execute(
 
     fitted_baseline = clone(baseline_pipeline).fit(development_features, development_target)
     fitted_candidate = clone(selected_pipeline).fit(development_features, development_target)
+    if stage_callback is not None:
+        stage_callback("TRAIN", {"baseline": baseline, "trials": trials})
     holdout_features, holdout_target = sealed_holdout.open_once()
-    baseline_holdout_metrics = _holdout_metrics(
+    baseline_holdout = _holdout_evaluation(
         fitted_baseline, holdout_features, holdout_target, resolved_task
     )
-    candidate_holdout_metrics = _holdout_metrics(
+    candidate_holdout = _holdout_evaluation(
         fitted_candidate, holdout_features, holdout_target, resolved_task
+    )
+    baseline_holdout_metrics = baseline_holdout.metrics
+    candidate_holdout_metrics = candidate_holdout.metrics
+    visualizations = render_evaluation_visualizations(
+        task_type=resolved_task,
+        baseline_metrics=baseline_holdout_metrics,
+        candidate=candidate_holdout,
     )
     baseline_primary = float(baseline_holdout_metrics[primary_metric_name])
     candidate_primary = float(candidate_holdout_metrics[primary_metric_name])
@@ -691,6 +716,8 @@ def _execute(
             "This slice assumes one i.i.d. table.",
             "No production eligibility or deployment approval was evaluated.",
         ],
+        "visualization_status": visualization_status([item.metadata() for item in visualizations]),
+        "visualizations": [item.metadata() for item in visualizations],
     }
 
     model_buffer = io.BytesIO()
@@ -763,6 +790,7 @@ def _execute(
         baseline=baseline,
         trials=trials,
         evaluation=evaluation,
+        visualizations=visualizations,
         model_metadata=model_metadata,
         model_bytes=model_bytes,
         report_bytes=report_bytes,
@@ -1346,6 +1374,16 @@ def _holdout_metrics(
     target: pd.Series,
     task_type: TaskType,
 ) -> dict[str, float]:
+    return _holdout_evaluation(pipeline, features, target, task_type).metrics
+
+
+def _holdout_evaluation(
+    pipeline: Pipeline,
+    features: pd.DataFrame,
+    target: pd.Series,
+    task_type: TaskType,
+) -> HoldoutEvaluation:
+    positive_probability: np.ndarray | None = None
     if task_type == "BINARY_CLASSIFICATION":
         probabilities = pipeline.predict_proba(features)
         classes = list(pipeline.classes_)
@@ -1368,7 +1406,14 @@ def _holdout_metrics(
     normalized = {name: float(value) for name, value in metrics.items()}
     if not all(math.isfinite(value) for value in normalized.values()):
         raise ModelTrainingError("Final holdout evaluation produced a non-finite metric.")
-    return normalized
+    return HoldoutEvaluation(
+        metrics=normalized,
+        target=np.asarray(target),
+        predictions=np.asarray(predictions),
+        positive_scores=(
+            np.asarray(positive_probability) if positive_probability is not None else None
+        ),
+    )
 
 
 def _metric_is_maximized(metric: str) -> bool:

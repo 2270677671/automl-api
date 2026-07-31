@@ -33,11 +33,11 @@ Dockerfile 的 production target 声明以下依赖与控制面能力。当前�
 - 生产部署审批 workflow，以及审批通过后的 `ModelCandidate` 注册和结果 manifest。
 - local profile 中会撤销访问并物理删除本地数据集/artifact 字节的 deletion job API。
 
-这些依赖尚未连接到实际请求路径。当前仓库仍需实现并验收：
+单节点 profile 已连接上述控制面、Webhook HTTP 投递和本地删除路径。以下能力仍需实现并验收：
 
 - 多副本高可用、分布式 worker、PostgreSQL/RLS 和对象存储隔离。
 - 出站 DLP 的 PII 回归集、opaque column ID 和租户同意审计。
-- Webhook HTTP dispatcher 的真实投递、重试、死信和告警。
+- 多副本场景的独立分布式 Webhook dispatcher、集中死信监控和告警。
 - AutoGluon/TabPFN 的容器级硬隔离、硬超时和资源压力测试。
 
 因此，受控单机、有限租户、允许维护窗口的场景可使用
@@ -106,7 +106,7 @@ flowchart LR
 - SQLite 和本地对象目录不能作为多副本生产状态层。
 - 容器内 AutoGluon/TabPFN 仍属于受信代码执行边界，不是强沙箱。
 - 当前 manifest 固定报告 `production_external_llm_safe=false`。
-- 内置 HTTP dispatcher 不可用；endpoint/outbox API 不能替代 SSE、轮询或独立 dispatcher。
+- 内置 HTTP dispatcher 运行在 API lifespan 内；SSE/轮询仍是 callback 故障时的恢复源。
 - state、backup 和异地副本必须部署在加密卷上；仓库不能替宿主机提供静态加密。
 - 默认 Run 返回 `NO_ELIGIBLE_MODEL`；只有显式设置 `REQUIRE_APPROVAL` 并完成审批才注册
   `ModelCandidate`，且 API 仍不自动部署在线推理服务。
@@ -123,7 +123,7 @@ flowchart LR
 - 独立 worker 池，支持 lease、心跳、重试、硬超时和资源配额。
 - 正式身份系统，支持 OIDC/JWKS 或 workload identity。
 - 集中日志、指标、trace、审计和告警。
-- Webhook outbox 和 dispatcher。
+- 独立的分布式 Webhook outbox dispatcher；单节点当前使用 API 进程内 durable dispatcher。
 
 ## 6. 生产配置
 
@@ -267,7 +267,7 @@ dispatcher 已接入请求路径并完成验收后的新代码版本，才允许
 | G-003 | 对象存储/KMS | 仅 boto3 依赖，运行时仍为本地文件 | 上传、finalize、download ticket、Range、hash 验证通过 |
 | G-004 | Worker 隔离与硬超时 | 未完成，运行时仍为进程内 worker | AutoGluon/TabPFN 超时、内存、CPU 和取消测试通过 |
 | G-005 | Agent context DLP | 未完成，配置字符串不等于运行时 DLP | prompt injection 和 PII 回归集通过 |
-| G-006 | Webhook dispatcher | durable outbox/redelivery API 可用；HTTP dispatcher 未实现 | HMAC、重试、死信、重投、禁用/启用测试通过 |
+| G-006 | Webhook dispatcher | durable outbox、HMAC HTTP 投递和 redelivery API 可用 | HMAC、重试、耗尽、重投、禁用/启用测试通过 |
 | G-007 | 审批 workflow | local 控制面可用；生产要求 human actor，完整审计待接入 | 状态转换、过期、身份和审计通过 |
 | G-008 | 删除 saga | local 字节删除和访问撤销可用；外部存储 worker 未实现 | 数据集、派生输出、artifact 和审计保留策略通过 |
 | G-009 | 模型注册和部署门禁 | local `ModelCandidate` 可用；真实质量门禁和部署未实现 | 合格结果只在质量/审批通过后出现 |

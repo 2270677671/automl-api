@@ -101,6 +101,11 @@ from .storage import (
 from .store import IdempotencyState, InMemoryStore, StoredResponse
 from .version import __version__ as SERVICE_VERSION
 from .worker import LocalExecutionWorker
+from .webhooks import (
+    WebhookDeliverySettings,
+    WebhookDeliveryWorker,
+    validate_webhook_registration_url,
+)
 from .workflow import WorkflowService
 
 
@@ -377,6 +382,29 @@ def _approval_expires_at(approval: dict[str, Any]) -> datetime:
         ) from error
 
 
+def _webhook_redelivery_deadline(delivery: dict[str, Any]) -> datetime:
+    raw = delivery.get("redeliver_until")
+    if not isinstance(raw, str):
+        raise APIProblem(
+            410,
+            "webhook_redelivery_expired",
+            "Webhook redelivery window expired",
+            "The exhausted delivery is no longer retained for manual redelivery.",
+        )
+    try:
+        deadline = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if deadline.utcoffset() is None:
+            raise ValueError("redelivery deadline must include a timezone")
+        return deadline
+    except (TypeError, ValueError) as error:
+        raise APIProblem(
+            410,
+            "webhook_redelivery_expired",
+            "Webhook redelivery window expired",
+            "The exhausted delivery is no longer retained for manual redelivery.",
+        ) from error
+
+
 def _require_human_approval(principal: Principal) -> None:
     if principal.authentication_mode == "production" and principal.actor_type != "human":
         raise APIProblem(
@@ -457,7 +485,7 @@ async def _idempotent(
     request: Request,
     body: Any,
     execute: Operation,
-) -> JSONResponse:
+) -> Response:
     if any(ord(character) < 33 or ord(character) > 126 for character in key):
         raise APIProblem(
             400,
@@ -490,12 +518,7 @@ async def _idempotent(
             scoped_operation, key, fingerprint, timeout=30.0
         )
     if decision.state is IdempotencyState.REPLAY and decision.response is not None:
-        replay = decision.response
-        return JSONResponse(
-            status_code=replay.status_code,
-            content=replay.body,
-            headers=replay.headers,
-        )
+        return _stored_http_response(decision.response)
     if decision.state is not IdempotencyState.NEW:
         if decision.state is IdempotencyState.CONFLICT:
             raise APIProblem(
@@ -540,6 +563,12 @@ async def _idempotent(
     except Exception:
         await state.abort_idempotent_request(scoped_operation, key, fingerprint)
         raise
+    return _stored_http_response(stored)
+
+
+def _stored_http_response(stored: StoredResponse) -> Response:
+    if 100 <= stored.status_code < 200 or stored.status_code in {204, 205, 304}:
+        return Response(status_code=stored.status_code, headers=stored.headers)
     return JSONResponse(
         status_code=stored.status_code,
         content=stored.body,
@@ -592,6 +621,7 @@ def create_app(
 
     durable_mode = isinstance(state, SqliteStore) and blob_store.durable
     worker: LocalExecutionWorker | None = None
+    webhook_worker: WebhookDeliveryWorker | None = None
     if durable_mode:
         assert isinstance(state, SqliteStore)
         durable_service = DurableWorkflowService(state, blob_store=blob_store, limits=limits)
@@ -601,6 +631,7 @@ def create_app(
             durable_service.handle_execution_job,
             on_dead=durable_service.handle_dead_job,
         )
+        webhook_worker = WebhookDeliveryWorker(state, WebhookDeliverySettings.from_env())
     else:
         service = WorkflowService(state, blob_store=blob_store, limits=limits)
 
@@ -617,8 +648,12 @@ def create_app(
             if worker is not None:
                 await durable_service.ensure_execution_jobs()
                 await worker.start()
+            if webhook_worker is not None:
+                await webhook_worker.start()
             yield
         finally:
+            if webhook_worker is not None:
+                await webhook_worker.stop()
             if worker is not None:
                 await worker.stop()
             if owns_state and isinstance(state, SqliteStore):
@@ -637,6 +672,7 @@ def create_app(
     application.state.workflow = service
     application.state.backend_registry = service.backend_registry
     application.state.worker = worker
+    application.state.webhook_worker = webhook_worker
     application.state.runtime_limits = limits
     application.state.production = production_settings
     application.state.runtime_hardening = hardening_settings
@@ -677,6 +713,12 @@ def create_app(
             if worker_ok
             else "The durable execution worker is not running."
         )
+        webhook_worker_ok = webhook_worker is not None and webhook_worker.is_running
+        webhook_worker_detail = (
+            "The durable HTTP webhook dispatcher is running."
+            if webhook_worker_ok
+            else "The durable HTTP webhook dispatcher is not running."
+        )
 
         backup_ok = False
         backup_detail = "The backup directory is not configured."
@@ -714,6 +756,12 @@ def create_app(
             ProductionCheck("sqlite_quick_check", sqlite_ok, sqlite_detail, required),
             ProductionCheck("local_blob_store", blob_ok, blob_detail, required),
             ProductionCheck("worker_running", worker_ok, worker_detail, required),
+            ProductionCheck(
+                "webhook_worker_running",
+                webhook_worker_ok,
+                webhook_worker_detail,
+                required,
+            ),
             ProductionCheck("backup_directory", backup_ok, backup_detail, required),
         )
 
@@ -853,8 +901,10 @@ def create_app(
                     "binary_classification",
                     "regression",
                     "offline_evaluation",
+                    "evaluation_visualizations",
                     "human_interrupt_resume",
                     "agent_allowed_recommended_answers",
+                    "built_in_webhook_http_delivery",
                     *(
                         ("single_node_production_runtime",)
                         if production_settings.single_node
@@ -869,7 +919,6 @@ def create_app(
                     "ranking",
                     "unbounded_hyperparameter_search",
                     "internal_llm_planning",
-                    "built_in_webhook_http_delivery",
                 ],
                 "supported_task_types": ["BINARY_CLASSIFICATION", "REGRESSION"],
                 "supported_media_types": [
@@ -1965,118 +2014,126 @@ def create_app(
             )
             command = await state.get_command(command["command_id"])
             assert command is not None
+            outputs = await state.list_outputs(run_id)
+            visualization_refs = [
+                artifact
+                for output in outputs
+                for artifact in output.get("artifact_refs", [])
+                if artifact.get("media_type") == "image/png"
+                and str(artifact.get("kind", "")).startswith("EVALUATION_")
+            ]
 
+            completed_at = iso_now()
             if decision == "APPROVE":
                 candidate = run.get("pending_model_candidate")
-                if candidate:
-                    model = await state.create_model(
-                        {
-                            **candidate,
-                            "tenant_id": principal.tenant_id,
-                            "created_at": iso_now(),
-                        }
+                if not candidate:
+                    raise APIProblem(
+                        409,
+                        "model_candidate_missing",
+                        "Model candidate is missing",
+                        "The approval cannot complete without a packaged model candidate.",
                     )
-                    outputs = await state.list_outputs(run_id)
-                    await state.set_result(
-                        run_id,
-                        {
-                            "result_manifest_id": state.new_id("result"),
-                            "run_id": run_id,
-                            "outcome": "SUCCEEDED",
-                            "model_disposition": "ELIGIBLE_MODEL_AVAILABLE",
-                            "summary": "Production deployment approval was granted.",
-                            "backend_id": run.get("backend_id"),
-                            "backend_version": run.get("backend_version"),
-                            "engine_version": run.get("method_version"),
-                            "output_refs": [service._output_ref(output) for output in outputs],
-                            "partial": False,
-                            "eligible_model": {
-                                "model_id": model["model_id"],
-                                "href": f"/v1/models/{model['model_id']}",
-                            },
-                            "reason": None,
-                            "completed_at": iso_now(),
-                        },
-                    )
-                updated = await state.update_run(
-                    run_id,
+                existing_model = await state.get_model(str(candidate["model_id"]))
+                model = existing_model or await state.create_model(
                     {
-                        "phase": "PACKAGE",
-                        "status": "TERMINAL",
-                        "outcome": "SUCCEEDED",
-                        "execution_step": "COMPLETED",
-                        "progress": service._progress(100, "COMPLETED", "Run completed"),
-                        "stages": _completed_stages(run["stages"]),
-                        "blocking": {"decision_packet_ids": [], "approval_ids": []},
-                        "available_actions": [],
-                        "updated_at": iso_now(),
+                        **candidate,
+                        "tenant_id": principal.tenant_id,
+                        "created_at": completed_at,
+                    }
+                )
+                result_payload = {
+                    "run_id": run_id,
+                    "outcome": "SUCCEEDED",
+                    "model_disposition": "ELIGIBLE_MODEL_AVAILABLE",
+                    "summary": "Production deployment approval was granted.",
+                    "backend_id": run.get("backend_id"),
+                    "backend_version": run.get("backend_version"),
+                    "engine_version": run.get("method_version"),
+                    "output_refs": [service._output_ref(output) for output in outputs],
+                    "visualization_refs": visualization_refs,
+                    "partial": False,
+                    "eligible_model": {
+                        "model_id": model["model_id"],
+                        "href": f"/v1/models/{model['model_id']}",
                     },
-                    expected_revision=run["run_revision"],
-                    bump_revision=True,
-                )
-                updated = await service._emit(
-                    updated,
-                    "run.completed.v1",
-                    {"outcome": "SUCCEEDED", "result_href": f"/v1/runs/{run_id}/result"},
-                )
-                await state.update_command(
-                    command["command_id"],
-                    {"resulting_run_revision": updated["run_revision"]},
-                )
+                    "reason": None,
+                    "completed_at": completed_at,
+                }
             else:
-                await state.set_result(
-                    run_id,
+                result_payload = {
+                    "run_id": run_id,
+                    "outcome": "SUCCEEDED",
+                    "model_disposition": "NO_ELIGIBLE_MODEL",
+                    "summary": "Production deployment approval was not granted.",
+                    "backend_id": run.get("backend_id"),
+                    "backend_version": run.get("backend_version"),
+                    "engine_version": run.get("method_version"),
+                    "output_refs": [service._output_ref(output) for output in outputs],
+                    "visualization_refs": visualization_refs,
+                    "partial": False,
+                    "eligible_model": None,
+                    "reason": {
+                        "code": "PRODUCTION_APPROVAL_NOT_GRANTED",
+                        "message": payload["reason"],
+                        "retriable": decision == "REQUEST_CHANGES",
+                        "failed_gates": [status],
+                        "evidence_refs": approval.get("evidence_refs", []),
+                        "remediation": ["Create a new Run after resolving approval feedback."],
+                    },
+                    "completed_at": completed_at,
+                }
+
+            package_refs = [
+                service._output_ref(output)
+                for output in outputs
+                if output.get("phase") == "PACKAGE"
+            ]
+            updated, _, _ = await state.finalize_run_with_result(
+                run_id,
+                result=result_payload,
+                run_updates={
+                    "phase": "PACKAGE",
+                    "status": "TERMINAL",
+                    "outcome": "SUCCEEDED",
+                    "execution_step": "COMPLETED",
+                    "progress": service._progress(100, "COMPLETED", "Run completed"),
+                    "stages": _completed_stages(run["stages"]),
+                    "blocking": {"decision_packet_ids": [], "approval_ids": []},
+                    "available_actions": [],
+                    "updated_at": completed_at,
+                },
+                events=[
                     {
-                        "result_manifest_id": state.new_id("result"),
-                        "run_id": run_id,
-                        "outcome": "SUCCEEDED",
-                        "model_disposition": "NO_ELIGIBLE_MODEL",
-                        "summary": "Production deployment approval was not granted.",
-                        "backend_id": run.get("backend_id"),
-                        "backend_version": run.get("backend_version"),
-                        "engine_version": run.get("method_version"),
-                        "output_refs": [
-                            service._output_ref(output)
-                            for output in await state.list_outputs(run_id)
-                        ],
-                        "partial": False,
-                        "eligible_model": None,
-                        "reason": {
-                            "code": "PRODUCTION_APPROVAL_NOT_GRANTED",
-                            "message": payload["reason"],
-                            "retriable": decision == "REQUEST_CHANGES",
-                            "failed_gates": [status],
-                            "evidence_refs": approval.get("evidence_refs", []),
-                            "remediation": ["Create a new Run after resolving approval feedback."],
+                        "schema_version": "1.0",
+                        "occurred_at": completed_at,
+                        "type": "run.stage_completed.v1",
+                        "payload": {
+                            "phase": "PACKAGE",
+                            "status": "COMPLETED",
+                            "completed_at": completed_at,
+                            "progress_percent": 100.0,
+                            "output_refs": package_refs,
+                            "next_phase": None,
                         },
-                        "completed_at": iso_now(),
+                        "links": {"run": f"/v1/runs/{run_id}"},
                     },
-                )
-                updated = await state.update_run(
-                    run_id,
                     {
-                        "phase": "PACKAGE",
-                        "status": "TERMINAL",
-                        "outcome": "SUCCEEDED",
-                        "execution_step": "COMPLETED",
-                        "progress": service._progress(100, "COMPLETED", "Run completed"),
-                        "stages": _completed_stages(run["stages"]),
-                        "blocking": {"decision_packet_ids": [], "approval_ids": []},
-                        "available_actions": [],
-                        "updated_at": iso_now(),
+                        "schema_version": "1.0",
+                        "occurred_at": completed_at,
+                        "type": "run.completed.v1",
+                        "payload": {
+                            "outcome": "SUCCEEDED",
+                            "result_href": f"/v1/runs/{run_id}/result",
+                        },
+                        "links": {"run": f"/v1/runs/{run_id}"},
                     },
-                    expected_revision=run["run_revision"],
-                    bump_revision=True,
-                )
-                updated = await service._emit(
-                    updated,
-                    "run.completed.v1",
-                    {"outcome": "SUCCEEDED", "result_href": f"/v1/runs/{run_id}/result"},
-                )
-                await state.update_command(
-                    command["command_id"],
-                    {"resulting_run_revision": updated["run_revision"]},
-                )
+                ],
+                expected_revision=run["run_revision"],
+            )
+            await state.update_command(
+                command["command_id"],
+                {"resulting_run_revision": updated["run_revision"]},
+            )
             command = await state.get_command(command["command_id"])
             assert command is not None
             return 202, _validated(CommandReceipt, command), {"Retry-After": "1"}
@@ -2112,6 +2169,18 @@ def create_app(
     ) -> JSONResponse:
         _authorize_operation(principal, "createWebhookEndpoint")
         payload = body.model_dump(mode="json")
+        try:
+            validate_webhook_registration_url(
+                str(payload["url"]),
+                require_https=WebhookDeliverySettings.from_env().require_https,
+            )
+        except ValueError as error:
+            raise APIProblem(
+                422,
+                "invalid_webhook_url",
+                "Invalid webhook URL",
+                str(error),
+            ) from error
 
         async def execute() -> tuple[int, dict[str, Any], dict[str, str]]:
             secret = _new_webhook_secret()
@@ -2226,7 +2295,7 @@ def create_app(
         request: Request,
         principal: PrincipalDependency,
         idempotency_key: IdempotencyKey,
-    ) -> JSONResponse:
+    ) -> Response:
         _authorize_operation(principal, "deleteWebhookEndpoint")
 
         async def execute() -> tuple[int, dict[str, Any], dict[str, str]]:
@@ -2476,14 +2545,25 @@ def create_app(
                     "Delivery is not redeliverable",
                     "Only pending, retrying, or exhausted deliveries can be redelivered.",
                 )
+            if (
+                delivery["status"] == "EXHAUSTED"
+                and _webhook_redelivery_deadline(delivery) <= utcnow()
+            ):
+                raise APIProblem(
+                    410,
+                    "webhook_redelivery_expired",
+                    "Webhook redelivery window expired",
+                    "The exhausted delivery is no longer retained for manual redelivery.",
+                )
             await state.update_webhook_delivery(
                 webhook_endpoint_id,
                 delivery_id,
                 {
                     "status": "PENDING",
-                    "attempt_count": int(delivery["attempt_count"]) + 1,
                     "next_attempt_at": iso_now(),
                     "last_problem": None,
+                    "exhausted_at": None,
+                    "redeliver_until": None,
                 },
             )
             redelivery_id = state.new_id("redelivery")

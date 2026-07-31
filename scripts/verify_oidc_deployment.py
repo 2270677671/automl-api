@@ -15,6 +15,28 @@ import httpx
 import jwt
 
 
+REQUIRED_WEBHOOK_OPERATION_IDS = (
+    "createWebhookEndpoint",
+    "listWebhookEndpoints",
+    "getWebhookEndpoint",
+    "deleteWebhookEndpoint",
+    "rotateWebhookEndpointSecret",
+    "enableWebhookEndpoint",
+    "listWebhookDeliveries",
+    "getWebhookDelivery",
+    "redeliverWebhookDelivery",
+)
+REQUIRED_WEBHOOK_OPERATION_SCOPES = frozenset(
+    f"automl:operation:{operation_id}" for operation_id in REQUIRED_WEBHOOK_OPERATION_IDS
+)
+REQUIRED_DATA_LIFECYCLE_OPERATION_SCOPES = frozenset(
+    {
+        "automl:operation:deleteDataset",
+        "automl:operation:getDeletionJob",
+    }
+)
+
+
 class VerificationError(RuntimeError):
     """The deployed identity or API contract did not pass verification."""
 
@@ -195,9 +217,21 @@ def verify(settings: Settings) -> dict[str, Any]:
             raise VerificationError("machine client access token is missing tenant_id")
         if settings.expected_tenant_id and tenant_id != settings.expected_tenant_id:
             raise VerificationError("machine client access token tenant_id is incorrect")
-        scopes = str(claims.get("scopes", "")).split()
+        scopes = frozenset(str(claims.get("scopes", "")).split())
         if "automl:operation:getAgentInterfaceManifest" not in scopes:
             raise VerificationError("machine client cannot read the Agent interface manifest")
+        missing_webhook_scopes = REQUIRED_WEBHOOK_OPERATION_SCOPES - scopes
+        if missing_webhook_scopes:
+            missing = ", ".join(sorted(missing_webhook_scopes))
+            raise VerificationError(
+                f"machine client is missing required Webhook operation scopes: {missing}"
+            )
+        missing_lifecycle_scopes = REQUIRED_DATA_LIFECYCLE_OPERATION_SCOPES - scopes
+        if missing_lifecycle_scopes:
+            missing = ", ".join(sorted(missing_lifecycle_scopes))
+            raise VerificationError(
+                f"machine client is missing required data lifecycle operation scopes: {missing}"
+            )
         if "automl:operation:decideApproval" in scopes:
             raise VerificationError("machine client must not receive decideApproval")
 
@@ -222,6 +256,8 @@ def verify(settings: Settings) -> dict[str, Any]:
         "tenant_id": tenant_id,
         "actor_type": "agent",
         "operation_scope_count": len(scopes),
+        "webhook_operation_scope_count": len(REQUIRED_WEBHOOK_OPERATION_SCOPES),
+        "data_lifecycle_operation_scope_count": len(REQUIRED_DATA_LIFECYCLE_OPERATION_SCOPES),
         "decide_approval_granted": False,
         "invalid_secret_status": 401,
         "invalid_secret_error": invalid_error,

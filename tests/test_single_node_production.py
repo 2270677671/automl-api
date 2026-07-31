@@ -59,7 +59,7 @@ def _single_node_environment(tmp_path: Path) -> dict[str, str]:
         "AUTOML_STATE_DIR": str(tmp_path / "state"),
         "AUTOML_TICKET_SECRET": "ticket-secret-000000000000000000000000000000000000",
         "AUTOML_TLS_TERMINATED": "true",
-        "AUTOML_WEBHOOK_DISPATCH_MODE": "outbox",
+        "AUTOML_WEBHOOK_DISPATCH_MODE": "builtin",
         "AUTOML_WEBHOOK_SIGNING_REQUIRED": "true",
         "AUTOML_WORKER_ISOLATION": "container-bounded",
     }

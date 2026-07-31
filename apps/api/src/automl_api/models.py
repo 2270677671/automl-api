@@ -442,6 +442,7 @@ class CreateRunRequest(RequestModel):
     autonomy: AutonomyPolicy
     policy: RunPolicy
     budget: RunBudget
+    callback_url: AnyUrl | None = None
     webhook_endpoint_ids: set[str] = Field(default_factory=set)
 
 
@@ -516,6 +517,8 @@ class RunSnapshot(PublicModel):
     created_at: datetime
     updated_at: datetime
     links: dict[str, str]
+    callback_url: AnyUrl | None = None
+    webhook_endpoint_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_terminal_invariants(self) -> RunSnapshot:
@@ -725,6 +728,29 @@ class TrialResultPayload(PublicModel):
     failure_code: str | None = None
 
 
+class EvaluationVisualization(PublicModel):
+    chart_type: Literal[
+        "METRIC_COMPARISON",
+        "CONFUSION_MATRIX",
+        "ROC_CURVE",
+        "PRECISION_RECALL_CURVE",
+        "CALIBRATION_CURVE",
+        "OBSERVED_VS_PREDICTED",
+        "RESIDUALS_VS_PREDICTED",
+        "RESIDUAL_DISTRIBUTION",
+    ]
+    status: Literal["GENERATED", "SKIPPED", "FAILED"]
+    artifact_id: str | None = None
+    media_type: Literal["image/png"] | None = None
+    source_partition: Literal["SEALED_HOLDOUT"]
+    sample_count: NonNegativeInt
+    aggregate_only: Literal[True]
+    contains_raw_rows: Literal[False]
+    size_bytes: NonNegativeInt | None = None
+    sha256: Sha256 | None = None
+    failure_code: str | None = None
+
+
 class EvaluationReportPayload(PublicModel):
     kind: Literal["EVALUATION_REPORT"]
     primary_metric: str
@@ -735,6 +761,8 @@ class EvaluationReportPayload(PublicModel):
     eligible_candidate: bool
     failed_gates: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
+    visualization_status: Literal["COMPLETE", "PARTIAL", "UNAVAILABLE"] = "UNAVAILABLE"
+    visualizations: list[EvaluationVisualization] = Field(default_factory=list)
 
 
 class LogSummaryPayload(PublicModel):
@@ -876,6 +904,15 @@ class PhaseChangedPayload(PublicModel):
     previous_phase: RunPhase | None = None
 
 
+class StageCompletedPayload(PublicModel):
+    phase: RunPhase
+    status: Literal["COMPLETED"]
+    completed_at: datetime
+    progress_percent: Percent
+    output_refs: list[OutputRef]
+    next_phase: RunPhase | None
+
+
 class ProgressUpdatedPayload(PublicModel):
     progress: Progress
 
@@ -939,6 +976,11 @@ class PhaseChangedEvent(BaseRunEvent):
     payload: PhaseChangedPayload
 
 
+class StageCompletedEvent(BaseRunEvent):
+    type: Literal["run.stage_completed.v1"]
+    payload: StageCompletedPayload
+
+
 class ProgressUpdatedEvent(BaseRunEvent):
     type: Literal["run.progress_updated.v1"]
     payload: ProgressUpdatedPayload
@@ -986,6 +1028,7 @@ class RunExpiredEvent(BaseRunEvent):
 
 RunEventVariant = Annotated[
     PhaseChangedEvent
+    | StageCompletedEvent
     | ProgressUpdatedEvent
     | OutputCommittedEvent
     | DecisionPacketRequestedEvent
@@ -1151,6 +1194,7 @@ class BaseRunResult(PublicModel):
     run_id: str
     summary: str
     output_refs: list[OutputRef]
+    visualization_refs: list[ArtifactRef] = Field(default_factory=list)
     completed_at: datetime
     backend_id: str | None = None
     backend_version: str | None = None
@@ -1236,19 +1280,31 @@ class ModelCandidate(PublicModel):
     created_at: datetime
 
 
+WebhookEventType = Literal[
+    "*",
+    "run.phase_changed.v1",
+    "run.stage_completed.v1",
+    "run.progress_updated.v1",
+    "output.committed.v1",
+    "decision_packet.requested.v1",
+    "approval.requested.v1",
+    "experiment.metrics_updated.v1",
+    "run.completed.v1",
+    "run.failed.v1",
+    "run.canceled.v1",
+    "run.expired.v1",
+]
+
+
 class CreateWebhookEndpointRequest(RequestModel):
     url: AnyUrl
-    event_types: Annotated[list[str], Field(min_length=1)]
+    event_types: Annotated[list[WebhookEventType], Field(min_length=1)]
     description: Annotated[str, StringConstraints(max_length=500)] | None = None
 
     @model_validator(mode="after")
     def validate_event_types(self) -> CreateWebhookEndpointRequest:
-        normalized = [item.strip() for item in self.event_types]
-        if any(not item for item in normalized):
-            raise ValueError("event_types cannot contain empty values")
-        if len(normalized) != len(set(normalized)):
+        if len(self.event_types) != len(set(self.event_types)):
             raise ValueError("event_types must be unique")
-        self.event_types = normalized
         return self
 
 

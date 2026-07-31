@@ -85,6 +85,15 @@ ACTIVE_AGENT_OPERATION_IDS = (
     "getRunResult",
     "getArtifact",
     "createArtifactDownloadTicket",
+    "createWebhookEndpoint",
+    "listWebhookEndpoints",
+    "getWebhookEndpoint",
+    "deleteWebhookEndpoint",
+    "rotateWebhookEndpointSecret",
+    "enableWebhookEndpoint",
+    "listWebhookDeliveries",
+    "getWebhookDelivery",
+    "redeliverWebhookDelivery",
 )
 
 KNOWN_OPERATION_IDS = frozenset(CANONICAL_OPERATION_IDS)

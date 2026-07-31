@@ -244,6 +244,33 @@ curl --cacert "$AUTOML_CA_FILE" -fsS \
 提交前将 JSON 中的 `dsv_REPLACE_ME` 替换为真实 `dataset_version_id`。创建成功返回 HTTP
 `202` 和 `run_id`。
 
+需要阶段回调时，先调用 `POST /v1/webhook-endpoints` 注册 HTTPS URL 并保存仅返回一次的
+`signing_secret`，再在 Run JSON 中增加：
+
+```bash
+curl --cacert "$AUTOML_CA_FILE" -fsS \
+  -X POST "$AUTOML_API_URL/v1/webhook-endpoints" \
+  -H "Authorization: Bearer $AUTOML_TOKEN" \
+  -H "Idempotency-Key: webhook-create-0001" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "url": "https://agent.example.com/automl/callback",
+    "event_types": ["run.stage_completed.v1", "run.completed.v1", "run.failed.v1"]
+  }'
+```
+
+```json
+{
+  "callback_url": "https://agent.example.com/automl/callback",
+  "webhook_endpoint_ids": ["wh_000000000001"]
+}
+```
+
+URL 必须完全匹配同租户 ACTIVE endpoint。每完成 `INGEST/PROFILE/PLAN/TRAIN/EVALUATE/PACKAGE`
+之一，服务在该阶段真实 durable barrier 之后投递 `run.stage_completed.v1`；失败自动重试，
+接收方按 delivery ID 幂等。可运行的 raw-body HMAC 验签接收端见
+[`examples/python/webhook_receiver.py`](../examples/python/webhook_receiver.py)。
+
 ### 6.5 查询 Run
 
 ```bash
@@ -326,6 +353,10 @@ curl --cacert "$AUTOML_CA_FILE" -N \
 ```
 
 断线后使用 `Last-Event-ID` 或 `after_seq` 续读，并按 `event_id` 去重，不得因断线重新创建 Run。
+
+`EVALUATION_REPORT.payload.visualizations[]` 给出评估图状态，成功图的 PNG 引用同时位于
+`EVALUATION_REPORT.artifact_refs[]` 和 `RunResult.visualization_refs[]`。callback 只发送引用和
+阶段摘要，不内嵌图片或逐行预测。
 
 ### 6.8 下载 artifact
 
@@ -501,7 +532,7 @@ Built with PriorLabs-TabPFN
 | `GET` | `/v1/artifacts/{artifact_id}` | 读取 artifact 元数据 |
 | `POST` | `/v1/artifacts/{artifact_id}:download` | 签发短期下载票据 |
 | `GET` | 票据返回的 download URL | 下载 artifact bytes |
-| `POST/GET` | `/v1/webhook-endpoints...` | 管理 webhook outbox 和 delivery |
+| `POST/GET` | `/v1/webhook-endpoints...` | 管理 callback、outbox、delivery 和重投 |
 | `GET/POST` | `/v1/runs/{run_id}/approvals...` | 列出和决策审批 |
 | `GET` | `/v1/models/{model_id}` | 读取通过门禁的模型候选 |
 

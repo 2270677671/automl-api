@@ -50,11 +50,11 @@ operator's model-weight terms; see [framework backend notes](docs/framework-back
 - evaluate bounded candidate pipelines for binary classification or regression while preserving a
   sealed holdout and framework-specific artifact metadata;
 - publish immutable outputs, JSON/SSE events, a terminal result, a split manifest, a run report,
-  and a backend artifact; TabPFN currently returns data-free evaluation metadata rather than a
+  aggregate sealed-holdout evaluation PNGs, and a backend artifact; TabPFN currently returns data-free evaluation metadata rather than a
   loadable model because its native fit state contains development data;
 - download artifacts with expiring tickets, byte ranges, resume support, and integrity checks.
-- manage production-control resources for Webhook endpoints, delivery outbox/redelivery, approval
-  decisions, deletion jobs, and approved `ModelCandidate` records.
+- manage production-control resources for Webhook endpoints, signed HTTP delivery with durable
+  retry/redelivery, approval decisions, deletion jobs, and approved `ModelCandidate` records.
 
 The service never calls an LLM. A separate Agent platform may discover this API, read a bounded
 Run context, and invoke the existing versioned operations. The platform owns model selection,
@@ -337,9 +337,9 @@ The single-node production profile deliberately does not provide:
   state, JWT/JWKS or an independent HS256 key, private HTTPS, audit logs, and verified backups;
 - high availability, multi-process workers, distributed leases, lease heartbeats, or PostgreSQL
   transactional projections;
-- an outbound Webhook HTTP dispatcher, distributed deletion worker, model-serving endpoint, or
-  automated production-quality gate; the API does provide the corresponding Webhook outbox,
-  approval, model-candidate, and deletion control-plane resources;
+- a multi-replica Webhook dispatcher, distributed deletion worker, model-serving endpoint, or
+  automated production-quality gate; the single-node profile does include an in-process durable
+  Webhook dispatcher plus approval, model-candidate, and deletion control-plane resources;
 - group/time-series/multiclass tasks, relational datasets, arbitrary model search, inference serving,
   or automatic production eligibility;
 - an internal LLM planner (by design), production-safe external LLM data transfer, or an endpoint
@@ -349,8 +349,7 @@ The experiment routes remain compatibility placeholders: listing returns an empt
 specific experiment returns `404`. In contrast, approval decisions, model-candidate lookup,
 dataset deletion jobs, and Webhook endpoint/outbox management are implemented. The local durable
 deletion path revokes access and physically removes local dataset/upload and derived artifact bytes;
-production storage still needs a separate deletion worker. A deployment also needs a dispatcher to
-perform actual outbound Webhook HTTP delivery.
+production storage still needs a separate deletion worker.
 
 See [docs/api-usage.md](docs/api-usage.md) for the API workflow and examples,
 [docs/api-route-reference.md](docs/api-route-reference.md) for per-route usage,

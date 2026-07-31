@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 
 from ..ml_engine import (
+    ExecutionStageCallback,
     ModelTrainingError,
     Source,
     TabularAutoMLResult,
@@ -191,6 +192,7 @@ class AutoGluonBackend:
         max_categories: int = 128,
         max_trials: int | None = None,
         max_wall_time_seconds: int | None = None,
+        stage_callback: ExecutionStageCallback | None = None,
     ) -> TabularAutoMLResult:
         descriptor = self.descriptor
         if not descriptor.available or descriptor.backend_version is None:
@@ -225,6 +227,8 @@ class AutoGluonBackend:
             max_trials=max_trials,
             engine_version=ENGINE_VERSION,
         )
+        if stage_callback is not None:
+            stage_callback("PLAN", {"task": prepared.task, "split": prepared.split})
         label = "__managed_automl_target__"
         while label in prepared.development_features.columns:
             label = f"_{label}"
@@ -391,6 +395,7 @@ class AutoGluonBackend:
                         "No production eligibility or deployment approval was evaluated.",
                     ],
                     native_trials=native_trials,
+                    stage_callback=stage_callback,
                 )
         except (BackendUnavailableError, ModelTrainingError):
             raise

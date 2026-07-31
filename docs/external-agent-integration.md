@@ -17,8 +17,12 @@ sequenceDiagram
     participant Worker as Deterministic ML Worker
 
     User->>Platform: Upload data / describe objective
+    Platform->>API: Register callback endpoint once
+    API-->>Platform: One-time signing secret
     Platform->>API: Upload dataset and create Run
     API->>Worker: Execute durable workflow
+    API-->>Platform: Signed stage callback (at least once)
+    Platform->>Platform: Verify raw-body HMAC / deduplicate delivery
     Platform->>API: GET agent-context / agent-actions
     API-->>Platform: Structured state, refs, revisions
     Platform->>LLM: Sanitized structured context
@@ -52,6 +56,26 @@ Agent 平台执行动作时，必须调用 OpenAPI 中已有的 `answerDecisionP
 - `runtime_limits`，用于在平台侧提前拦截过大的请求；
 - `default_backend_id` 与 `backends`，用于选择当前安装真正可执行的训练框架；
 - `supported_capabilities` 和 `unsupported_capabilities`，用于避免向用户或 LLM 夸大能力。
+
+## Callback 接入与恢复
+
+Agent 平台先使用 Agent tool OpenAPI 中的 `createWebhookEndpoint` 注册 HTTPS receiver，将一次性
+`signing_secret` 存入 secret manager，再在 `createRun` 中传入 `callback_url` 或
+`webhook_endpoint_ids`。该绑定是 Run 级的，不会向同租户其他 endpoint 广播。
+
+Callback receiver 必须：
+
+1. 在 JSON 解析前对 `ASCII(X-AutoML-Timestamp) + "." + raw_body` 做 HMAC-SHA256；
+2. 使用常量时间比较 `X-AutoML-Signature`，并拒绝超过 300 秒时间窗的请求；
+3. 在返回 2xx 前将 `X-AutoML-Delivery-Id` 唯一约束和 event 原子写入持久存储；
+4. 将 callback 视为至少一次通知，使用 `GET /v1/runs/{run_id}/events` 或 SSE 按 seq 补拉；
+5. 回查 RunSnapshot/Output/Result，不从通知展示文本推断权威状态。
+
+`run.stage_completed.v1` 阶段顺序为 `INGEST -> PROFILE -> PLAN -> TRAIN -> EVALUATE -> PACKAGE`。
+单节点 dispatcher 对非 2xx/超时执行 full-jitter 重试，12 次或 72 小时后进入 `EXHAUSTED`，
+并保留 30 天人工重投窗口。callback 不可达不会使训练失败。完整验签代码见
+[`examples/python/webhook_receiver.py`](../examples/python/webhook_receiver.py)，完整接收合同也保留在 Agent tool OpenAPI 顶层
+`webhooks.runEvent`。
 
 ## 后端发现与选择
 

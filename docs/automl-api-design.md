@@ -503,7 +503,7 @@ OpenAPI 按 `model_disposition` 强制三种合法组合：成功且有模型、
 6. `/v1` 只做向后兼容扩展；事件 type 带 `.v1`，输出带 `schema_version`。Run 创建时固定 policy/tool/output/event 版本，长 Run 不因服务升级改变语义。
 7. SSE、Webhook、RFC 9457、trace 和指标标签都执行相同的出站字段 allowlist；原始样本、列值、Prompt、栈和凭据不得进入公共通道。
 
-Webhook 使用稳定 delivery ID 和 HMAC-SHA256，不使用 API Bearer 认证。`signing_secret` 是 32 个随机字节的无填充 base64url，接收方必须先解码为 key；`X-AutoML-Signature` 为 `v1=<hex>`，签名原文是 `ASCII(timestamp) || 0x2e || raw_body_octets`，时间戳采用 Unix 秒，固定防重放窗口为 300 秒。创建和轮换 API 只返回一次新密钥；轮换时旧密钥保留 300 秒宽限期。非 2xx 或 10 秒超时使用 full-jitter 指数退避，最多 20 次或 72 小时；达到上限的 delivery 进入租户可查询的死信状态 `EXHAUSTED`，不存在隐藏 DLQ，记录在 `exhausted_at` 后保留并允许重投 30 天。endpoint 连续 20 次 attempt 失败时熔断为 `PAUSED_DELIVERY_FAILURES`，期间只记录 `PENDING`，修复后由 `:enable` 恢复；耗尽记录需显式 redeliver。管理 API 可以查询这些状态。回调地址必须防 SSRF、DNS 重绑定和云元数据访问。SSE 服务在线交互，Webhook 服务离线通知，二者都不是事实源；断线或投递失败后使用 JSON events 补齐，再回查 RunSnapshot。
+Webhook 使用稳定 delivery ID 和 HMAC-SHA256，不使用 API Bearer 认证。`signing_secret` 是 32 个随机字节的无填充 base64url，接收方必须先解码为 key；`X-AutoML-Signature` 为 `v1=<hex>`，签名原文是 `ASCII(timestamp) || 0x2e || raw_body_octets`，时间戳采用 Unix 秒，固定防重放窗口为 300 秒。创建和轮换 API 只返回一次新密钥；轮换时旧密钥保留 300 秒宽限期。非 2xx 或 10 秒超时使用 full-jitter 指数退避，最多 12 次或 72 小时；达到上限的 delivery 进入租户可查询的死信状态 `EXHAUSTED`，不存在隐藏 DLQ，记录在 `exhausted_at` 后保留并允许重投 30 天。endpoint 的 delivery 耗尽时熔断为 `PAUSED_DELIVERY_FAILURES`，期间只记录 `PENDING`，修复后由 `:enable` 恢复；耗尽记录需显式 redeliver。管理 API 可以查询这些状态。回调地址必须防 SSRF、DNS 重绑定和云元数据访问。SSE 服务在线交互，Webhook 服务离线通知，二者都不是事实源；断线或投递失败后使用 JSON events 补齐，再回查 RunSnapshot。
 
 ## 9. 持久化模型
 

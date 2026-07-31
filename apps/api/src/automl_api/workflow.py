@@ -42,6 +42,8 @@ RUN_PUBLIC_FIELDS = {
     "created_at",
     "updated_at",
     "links",
+    "callback_url",
+    "webhook_endpoint_ids",
 }
 
 
@@ -149,6 +151,72 @@ class WorkflowService:
                 extras=error.context,
             ) from error
         return backend.descriptor.as_dict()
+
+    async def _resolve_run_webhooks(
+        self,
+        principal: Principal,
+        request: dict[str, Any],
+    ) -> tuple[str | None, list[str]]:
+        callback_url = request.get("callback_url")
+        normalized_url = str(callback_url) if callback_url is not None else None
+        requested_ids = {str(item) for item in request.get("webhook_endpoint_ids") or []}
+        endpoints = await self.store.list_webhook_endpoints(principal.tenant_id)
+        by_id = {str(item["webhook_endpoint_id"]): item for item in endpoints}
+        missing = sorted(requested_ids - set(by_id))
+        if missing:
+            raise APIProblem(
+                422,
+                "webhook_endpoint_not_found",
+                "Webhook endpoint not found",
+                "Every webhook_endpoint_id must belong to the current tenant.",
+                extras={"webhook_endpoint_ids": missing},
+            )
+        inactive = sorted(
+            endpoint_id
+            for endpoint_id in requested_ids
+            if by_id[endpoint_id].get("status") != "ACTIVE"
+        )
+        if inactive:
+            raise APIProblem(
+                409,
+                "webhook_endpoint_not_active",
+                "Webhook endpoint is not active",
+                "Enable every selected webhook endpoint before creating the Run.",
+                extras={"webhook_endpoint_ids": inactive},
+            )
+        if normalized_url is not None:
+            matches = [
+                item
+                for item in endpoints
+                if str(item.get("url")) == normalized_url and item.get("status") == "ACTIVE"
+            ]
+            if not matches:
+                raise APIProblem(
+                    422,
+                    "callback_endpoint_not_registered",
+                    "Callback endpoint is not registered",
+                    (
+                        "Register this exact URL with POST /v1/webhook-endpoints, then use "
+                        "the returned signing secret at the callback receiver."
+                    ),
+                )
+            if len(matches) > 1:
+                raise APIProblem(
+                    409,
+                    "callback_endpoint_ambiguous",
+                    "Callback endpoint is ambiguous",
+                    "Disable duplicate endpoints so the callback URL identifies exactly one.",
+                )
+            callback_endpoint_id = str(matches[0]["webhook_endpoint_id"])
+            if requested_ids and requested_ids != {callback_endpoint_id}:
+                raise APIProblem(
+                    422,
+                    "callback_endpoint_mismatch",
+                    "Callback endpoint does not match",
+                    "callback_url and webhook_endpoint_ids must select the same endpoint.",
+                )
+            requested_ids = {callback_endpoint_id}
+        return normalized_url, sorted(requested_ids)
 
     @staticmethod
     def _owned(resource: dict[str, Any] | None, principal: Principal) -> dict[str, Any]:
@@ -399,6 +467,9 @@ class WorkflowService:
                 request,
                 media_type=version.get("media_type"),
             )
+            callback_url, webhook_endpoint_ids = await self._resolve_run_webhooks(
+                principal, request
+            )
 
             run_id = self.store.new_id("run")
             now = iso_now()
@@ -440,6 +511,8 @@ class WorkflowService:
                     "objective": request["objective"],
                     "backend_id": backend["backend_id"],
                     "policy": request["policy"],
+                    "callback_url": callback_url,
+                    "webhook_endpoint_ids": webhook_endpoint_ids,
                 }
             )
 
@@ -574,6 +647,39 @@ class WorkflowService:
             run["run_id"],
             {"snapshot_seq": event["seq"], "updated_at": iso_now()},
             bump_revision=False,
+        )
+
+    async def _complete_stage(
+        self,
+        run: dict[str, Any],
+        phase: str,
+        *,
+        next_phase: str | None,
+        output_refs: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        existing = await self.store.get_events(run["run_id"], types=["run.stage_completed.v1"])
+        if any(event.get("payload", {}).get("phase") == phase for event in existing):
+            current = await self.store.get_run(run["run_id"])
+            return current or run
+        progress_by_phase = {
+            "INGEST": 10.0,
+            "PROFILE": 30.0,
+            "PLAN": 45.0,
+            "TRAIN": 75.0,
+            "EVALUATE": 90.0,
+            "PACKAGE": 100.0,
+        }
+        return await self._emit(
+            run,
+            "run.stage_completed.v1",
+            {
+                "phase": phase,
+                "status": "COMPLETED",
+                "completed_at": iso_now(),
+                "progress_percent": progress_by_phase[phase],
+                "output_refs": output_refs or [],
+                "next_phase": next_phase,
+            },
         )
 
     async def _commit_output(
@@ -1211,6 +1317,7 @@ class WorkflowService:
             )
             await self.store.update_artifact(artifact_id, {"output_id": report_output["output_id"]})
             all_outputs = await self.store.list_outputs(run_id=run_id)
+            completed_at = iso_now()
             result = {
                 "result_manifest_id": self.store.new_id("result"),
                 "run_id": run_id,
@@ -1228,12 +1335,12 @@ class WorkflowService:
                     "evidence_refs": [report_output["output_id"]],
                     "remediation": ["Implement the deterministic baseline milestone."],
                 },
-                "completed_at": iso_now(),
+                "completed_at": completed_at,
             }
-            await self.store.set_result(run_id, result)
-            run = await self.store.update_run(
+            run, _, _ = await self.store.finalize_run_with_result(
                 run_id,
-                {
+                result=result,
+                run_updates={
                     "phase": "PACKAGE",
                     "status": "TERMINAL",
                     "outcome": "SUCCEEDED",
@@ -1246,15 +1353,21 @@ class WorkflowService:
                     "blocking": {"decision_packet_ids": [], "approval_ids": []},
                     "available_actions": [],
                     "latest_output_refs": [self._output_ref(report_output)],
-                    "updated_at": iso_now(),
+                    "updated_at": completed_at,
                 },
+                events=[
+                    {
+                        "schema_version": "1.0",
+                        "occurred_at": completed_at,
+                        "type": "run.completed.v1",
+                        "payload": {
+                            "outcome": "SUCCEEDED",
+                            "result_href": f"/v1/runs/{run_id}/result",
+                        },
+                        "links": {"run": f"/v1/runs/{run_id}"},
+                    }
+                ],
                 expected_revision=run["run_revision"],
-                bump_revision=True,
-            )
-            run = await self._emit(
-                run,
-                "run.completed.v1",
-                {"outcome": "SUCCEEDED", "result_href": f"/v1/runs/{run_id}/result"},
             )
             command = await self.store.update_command(
                 command["command_id"],
@@ -1354,9 +1467,10 @@ class WorkflowService:
                             },
                         )
                 outputs = await self.store.list_outputs(run_id=run_id)
-                await self.store.set_result(
+                completed_at = iso_now()
+                run, _, _ = await self.store.finalize_run_with_result(
                     run_id,
-                    {
+                    result={
                         "result_manifest_id": self.store.new_id("result"),
                         "run_id": run_id,
                         "outcome": "CANCELED",
@@ -1373,37 +1487,49 @@ class WorkflowService:
                             "evidence_refs": [],
                             "remediation": ["Create a new Run to start over."],
                         },
-                        "completed_at": iso_now(),
+                        "completed_at": completed_at,
                     },
+                    run_updates={
+                        "status": new_status,
+                        "outcome": outcome,
+                        "available_actions": actions,
+                        "blocking": {"decision_packet_ids": [], "approval_ids": []},
+                        "stages": self._canceled_stages(run["stages"]),
+                        "updated_at": completed_at,
+                    },
+                    events=[
+                        {
+                            "schema_version": "1.0",
+                            "occurred_at": completed_at,
+                            "type": "run.canceled.v1",
+                            "payload": {
+                                "outcome": "CANCELED",
+                                "result_href": f"/v1/runs/{run_id}/result",
+                            },
+                            "links": {"run": f"/v1/runs/{run_id}"},
+                        }
+                    ],
+                    expected_revision=run["run_revision"],
                 )
-            run = await self.store.update_run(
-                run_id,
-                {
-                    "status": new_status,
-                    "outcome": outcome,
-                    "available_actions": actions,
-                    "blocking": (
-                        {"decision_packet_ids": [], "approval_ids": []}
-                        if command_type == "CANCEL"
-                        else run["blocking"]
-                    ),
-                    "stages": (
-                        self._canceled_stages(run["stages"])
-                        if command_type == "CANCEL"
-                        else run["stages"]
-                    ),
-                    "updated_at": iso_now(),
-                },
-                expected_revision=run["run_revision"],
-                bump_revision=True,
-            )
-            event_type = "run.canceled.v1" if command_type == "CANCEL" else "run.phase_changed.v1"
-            payload = (
-                {"outcome": "CANCELED", "result_href": f"/v1/runs/{run_id}/result"}
-                if command_type == "CANCEL"
-                else {"previous_phase": run["phase"], "phase": run["phase"], "status": new_status}
-            )
-            run = await self._emit(run, event_type, payload)
+            if command_type != "CANCEL":
+                run = await self.store.update_run(
+                    run_id,
+                    {
+                        "status": new_status,
+                        "outcome": outcome,
+                        "available_actions": actions,
+                        "blocking": run["blocking"],
+                        "stages": run["stages"],
+                        "updated_at": iso_now(),
+                    },
+                    expected_revision=run["run_revision"],
+                    bump_revision=True,
+                )
+                run = await self._emit(
+                    run,
+                    "run.phase_changed.v1",
+                    {"previous_phase": run["phase"], "phase": run["phase"], "status": new_status},
+                )
             command = await self.store.update_command(
                 command["command_id"],
                 {

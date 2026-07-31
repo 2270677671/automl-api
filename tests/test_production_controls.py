@@ -74,7 +74,16 @@ def test_webhook_outbox_and_deletion_saga_are_api_visible(client: TestClient) ->
     endpoint = created.json()
     assert len(endpoint["signing_secret"]) == 43
 
-    create_waiting_run(client, "webhook-outbox-0001")
+    upload = create_ready_dataset(client, "webhook-outbox-0001")
+    request = run_request(upload["dataset_version_id"])
+    request["callback_url"] = endpoint["url"]
+    request["webhook_endpoint_ids"] = [endpoint["webhook_endpoint_id"]]
+    run = client.post(
+        "/v1/runs",
+        headers=mutation_headers("create-run-key-webhook-outbox-0001"),
+        json=request,
+    )
+    assert run.status_code == 202, run.text
     deliveries = client.get(
         f"/v1/webhook-endpoints/{endpoint['webhook_endpoint_id']}/deliveries",
         headers=AUTH,
@@ -255,7 +264,7 @@ def test_formal_profile_never_claims_ready_without_external_runtime_adapters() -
             "AUTOML_KMS_KEY_ID": "kms-key",
             "AUTOML_DLP_MODE": "strict",
             "AUTOML_AGENT_CONTEXT_FIELD_ALLOWLIST": "run,objective",
-            "AUTOML_WEBHOOK_DISPATCH_MODE": "outbox",
+            "AUTOML_WEBHOOK_DISPATCH_MODE": "builtin",
             "AUTOML_WEBHOOK_SIGNING_REQUIRED": "true",
             "AUTOML_DELETION_SAGA_ENABLED": "true",
             "AUTOML_MODEL_REGISTRY_MODE": "enabled",
@@ -308,8 +317,9 @@ def test_production_control_resources_survive_a_durable_restart(
         assert [item["webhook_endpoint_id"] for item in listed.json()["items"]] == [endpoint_id]
 
 
+@pytest.mark.parametrize("decision", ["APPROVE", "REJECT", "REQUEST_CHANGES"])
 def test_production_deploy_requires_approval_before_model_candidate(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, decision: str
 ) -> None:
     monkeypatch.setenv("AUTOML_STATE_DIR", str(tmp_path / "state"))
     rows = ["feature_a,feature_b,target"]
@@ -331,6 +341,8 @@ def test_production_deploy_requires_approval_before_model_candidate(
         request = run_request(dataset_version_id)
         request["autonomy"]["production_deploy"] = "REQUIRE_APPROVAL"
         request["budget"]["max_trials"] = 1
+        request["callback_url"] = endpoint.json()["url"]
+        request["webhook_endpoint_ids"] = [endpoint.json()["webhook_endpoint_id"]]
         created = client.post(
             "/v1/runs",
             headers=mutation_headers("approval-create-run-0001"),
@@ -364,6 +376,12 @@ def test_production_deploy_requires_approval_before_model_candidate(
         assert approval_run["blocking"]["approval_ids"]
         result_before_approval = client.get(f"/v1/runs/{run_id}/result", headers=AUTH)
         assert result_before_approval.status_code == 409
+        stages_before_approval = client.get(
+            f"/v1/runs/{run_id}/events",
+            headers=AUTH,
+            params={"types": "run.stage_completed.v1", "limit": 100},
+        ).json()["items"]
+        assert "PACKAGE" not in {item["payload"]["phase"] for item in stages_before_approval}
 
         approvals = client.get(f"/v1/runs/{run_id}/approvals", headers=AUTH)
         assert approvals.status_code == 200, approvals.text
@@ -377,7 +395,7 @@ def test_production_deploy_requires_approval_before_model_candidate(
                 **{"If-Match": f'"{approval["evidence_version"]}"'},
             ),
             json={
-                "decision": "APPROVE",
+                "decision": decision,
                 "reason": "Offline evidence accepted for controlled production candidate.",
                 "evidence_version": approval["evidence_version"],
             },
@@ -390,6 +408,9 @@ def test_production_deploy_requires_approval_before_model_candidate(
         stored_terminal = asyncio.run(application.state.store.get_run(run_id))
         assert stored_terminal is not None and stored_terminal["execution_step"] == "COMPLETED"
         events = client.get(f"/v1/runs/{run_id}/events", headers=AUTH).json()["items"]
+        assert events[-2]["type"] == "run.stage_completed.v1"
+        assert events[-2]["payload"]["phase"] == "PACKAGE"
+        assert events[-2]["run_revision"] == terminal["run_revision"]
         assert events[-1]["type"] == "run.completed.v1"
         deliveries = client.get(
             f"/v1/webhook-endpoints/{endpoint.json()['webhook_endpoint_id']}/deliveries",
@@ -399,10 +420,16 @@ def test_production_deploy_requires_approval_before_model_candidate(
         result = client.get(f"/v1/runs/{run_id}/result", headers=AUTH)
         assert result.status_code == 200, result.text
         result_body = result.json()
-        assert result_body["model_disposition"] == "ELIGIBLE_MODEL_AVAILABLE"
-        model_href = result_body["eligible_model"]["href"]
-        model = client.get(model_href, headers=AUTH)
-        assert model.status_code == 200, model.text
-        model_body = model.json()
-        assert model_body["status"] == "ELIGIBLE_CANDIDATE"
-        assert model_body["signature"]["inputs"]
+        assert result_body["visualization_refs"]
+        if decision == "APPROVE":
+            assert result_body["model_disposition"] == "ELIGIBLE_MODEL_AVAILABLE"
+            model_href = result_body["eligible_model"]["href"]
+            model = client.get(model_href, headers=AUTH)
+            assert model.status_code == 200, model.text
+            model_body = model.json()
+            assert model_body["status"] == "ELIGIBLE_CANDIDATE"
+            assert model_body["signature"]["inputs"]
+        else:
+            assert result_body["model_disposition"] == "NO_ELIGIBLE_MODEL"
+            assert result_body["eligible_model"] is None
+            assert result_body["reason"]["code"] == "PRODUCTION_APPROVAL_NOT_GRANTED"

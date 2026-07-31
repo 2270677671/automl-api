@@ -79,6 +79,18 @@ session、按服务返回 URL 和 headers 上传、保存 ETag、计算本地 SH
 每个 Run 还必须声明 `autonomy`、`policy` 和 `budget`。生产 Agent 平台不能通过增大客户端预算绕过
 服务端 profile 限制。
 
+### 6.1 绑定阶段 callback
+
+Callback 必须先通过 `POST /v1/webhook-endpoints` 注册。创建响应中的 `signing_secret`
+只返回一次，由 Agent 平台的 secret manager 保管，不得进入 LLM Prompt。然后在创建 Run 时
+传入 `callback_url`、`webhook_endpoint_ids` 之一或两者。URL 必须完全匹配同租户 ACTIVE
+endpoint；两者都省略则本 Run 不产生 delivery。
+
+服务在 `INGEST -> PROFILE -> PLAN -> TRAIN -> EVALUATE -> PACKAGE` 每个真实持久化边界后投递
+`run.stage_completed.v1`。接收端必须在解析 JSON 前使用 raw body 验证 HMAC，检查 300 秒
+时间窗，并按 delivery ID 持久化去重。可运行接收端见
+[`examples/python/webhook_receiver.py`](../examples/python/webhook_receiver.py)。
+
 ## 7. 观察过程
 
 有三种互补方式：
@@ -86,6 +98,7 @@ session、按服务返回 URL 和 headers 上传、保存 ETag、计算本地 SH
 - `GET /v1/runs/{run_id}`：读取权威快照和当前状态。
 - `GET /v1/runs/{run_id}/events`：JSON 补拉或 SSE 连续订阅。
 - `GET /v1/runs/{run_id}/outputs`：读取数据质量、任务定义、候选结果、评估和报告。
+- Webhook callback：接收离线阶段通知；失败重试不改变 Run 结果，不是唯一事实源。
 
 平台应持久化最后成功处理的 `seq`。SSE 断线后使用 `Last-Event-ID` 或 `after_seq` 续读，并按
 `event_id` 去重。不能因为网络中断就创建新 Run。
@@ -114,6 +127,12 @@ Run 进入 `WAITING_USER` 时：
 
 失败事件与结果中的 `retriable` 决定平台是否可以建议重试。输入或任务语义错误通常需要修正请求，
 而不是自动无限重试。
+
+训练成功后，`EVALUATION_REPORT.payload.visualizations[]` 列出每张评估图的生成、跳过或失败状态。
+成功的 PNG 同时出现在 `EVALUATION_REPORT.artifact_refs[]` 和 `RunResult.visualization_refs[]`。
+二分类包含指标表、混淆矩阵、ROC、PR，并按数据条件生成校准图；回归包含指标表、
+观测/预测、残差和残差分布。为避免单行泄露，无法形成至少两个样本聚合单元的回归 hexbin
+会标记为 `SKIPPED`，不会生成空图或单点图。
 
 ## 10. 下载 artifact
 

@@ -15,6 +15,7 @@ import pandas as pd
 from sklearn.preprocessing import OrdinalEncoder
 
 from ..ml_engine import (
+    ExecutionStageCallback,
     ModelTrainingError,
     Source,
     TabularAutoMLResult,
@@ -334,6 +335,7 @@ class TabPFNBackend:
         max_categories: int = 128,
         max_trials: int | None = None,
         max_wall_time_seconds: int | None = None,
+        stage_callback: ExecutionStageCallback | None = None,
     ) -> TabularAutoMLResult:
         if max_wall_time_seconds is not None and max_wall_time_seconds < 1:
             raise ValueError("max_wall_time_seconds must be positive")
@@ -373,6 +375,8 @@ class TabPFNBackend:
             max_trials=max_trials,
             engine_version=ENGINE_VERSION,
         )
+        if stage_callback is not None:
+            stage_callback("PLAN", {"task": prepared.task, "split": prepared.split})
         _check_deadline(deadline, stage="after_data_preparation")
         model_source = _model_source()
         model_path = _model_path_for_task(prepared.task_type, model_source)
@@ -467,6 +471,7 @@ class TabPFNBackend:
                     "No production eligibility or deployment approval was evaluated.",
                 ],
                 exportable=False,
+                stage_callback=stage_callback,
             )
         except (BackendUnavailableError, ModelTrainingError):
             raise

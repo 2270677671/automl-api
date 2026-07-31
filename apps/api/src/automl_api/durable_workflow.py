@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import timedelta
+from hashlib import sha256
 from typing import Any
 
 from .auth import Principal
@@ -77,6 +78,9 @@ class DurableWorkflowService(WorkflowService):
                 request,
                 media_type=version.get("media_type"),
             )
+            callback_url, webhook_endpoint_ids = await self._resolve_run_webhooks(
+                principal, request
+            )
             run_id = self.store.new_id("run")
             now = iso_now()
             budget = request["budget"]
@@ -124,6 +128,8 @@ class DurableWorkflowService(WorkflowService):
                     "policy": request["policy"],
                     "budget": budget,
                     "execution_step": "PROFILE",
+                    "callback_url": callback_url,
+                    "webhook_endpoint_ids": webhook_endpoint_ids,
                 }
             )
             await self.store.create_execution_job(
@@ -263,7 +269,7 @@ class DurableWorkflowService(WorkflowService):
     async def handle_execution_job(self, job: ExecutionJob) -> WorkerResult:
         run_id = str(job["run_id"])
         run = await self.store.get_run(run_id)
-        if run is None or run.get("status") == "TERMINAL":
+        if run is None or run.get("status") in {"TERMINAL", "WAITING_APPROVAL"}:
             return COMPLETE
         if run.get("status") in {"PAUSED", "WAITING_USER"}:
             return CHECKPOINT(
@@ -275,7 +281,7 @@ class DurableWorkflowService(WorkflowService):
         if step == "RESOLVE_TASK":
             return await self._execute_resolved_task(run)
         if step == "TRAIN":
-            return await self._execute_training(run)
+            return await self._execute_training(run, job)
         raise RuntimeError(f"unknown durable workflow step: {step}")
 
     async def handle_dead_job(self, job: ExecutionJob) -> None:
@@ -316,6 +322,7 @@ class DurableWorkflowService(WorkflowService):
                 },
                 bump_revision=False,
             )
+            current = await self._complete_stage(current, "INGEST", next_phase="PROFILE")
             current = await self._emit(
                 current,
                 "run.phase_changed.v1",
@@ -338,6 +345,12 @@ class DurableWorkflowService(WorkflowService):
                     "issues": [],
                 },
             )
+            current = await self._complete_stage(
+                current,
+                "PROFILE",
+                next_phase="PLAN",
+                output_refs=[self._output_ref(quality_output)],
+            )
             current = await self.store.update_run(
                 current["run_id"],
                 {"pre_split_profile": profile, "execution_step": "RESOLVE_TASK"},
@@ -354,10 +367,10 @@ class DurableWorkflowService(WorkflowService):
             await self.store.update_run(
                 current["run_id"],
                 {
-                    "phase": "TRAIN",
+                    "phase": "PLAN",
                     "status": "QUEUED",
                     "execution_step": "TRAIN",
-                    "progress": self._progress(40, "QUEUED", "Training step queued"),
+                    "progress": self._progress(40, "QUEUED", "Planning step queued"),
                     "available_actions": ["PAUSE", "CANCEL"],
                     "updated_at": iso_now(),
                 },
@@ -574,10 +587,10 @@ class DurableWorkflowService(WorkflowService):
             current = await self.store.update_run(
                 current["run_id"],
                 {
-                    "phase": "TRAIN",
+                    "phase": "PLAN",
                     "status": "QUEUED",
                     "execution_step": "TRAIN",
-                    "progress": self._progress(40, "QUEUED", "Training step queued"),
+                    "progress": self._progress(40, "QUEUED", "Planning step queued"),
                     "available_actions": ["PAUSE", "CANCEL"],
                     "pending_command_id": None,
                     "updated_at": iso_now(),
@@ -595,7 +608,276 @@ class DurableWorkflowService(WorkflowService):
                 )
             return CHECKPOINT("TRAIN", checkpoint={"answers_applied": True})
 
-    async def _execute_training(self, run: dict[str, Any]) -> WorkerResult:
+    async def _output_for_type(
+        self,
+        run_id: str,
+        output_type: str,
+        *,
+        trial_number: int | None = None,
+    ) -> dict[str, Any] | None:
+        for output in await self.store.list_outputs(run_id=run_id):
+            if output.get("type") != output_type:
+                continue
+            if (
+                trial_number is not None
+                and output.get("payload", {}).get("trial_number") != trial_number
+            ):
+                continue
+            return output
+        return None
+
+    async def _transition_running_phase(
+        self,
+        run: dict[str, Any],
+        *,
+        previous_phase: str,
+        phase: str,
+        progress_percent: float,
+        message: str,
+        completed: set[str],
+    ) -> dict[str, Any]:
+        phase_order = {
+            name: index
+            for index, name in enumerate(
+                ("INGEST", "PROFILE", "PLAN", "TRAIN", "EVALUATE", "PACKAGE")
+            )
+        }
+        if phase_order.get(str(run.get("phase")), -1) >= phase_order[phase]:
+            updated = run
+        else:
+            updated = await self.store.update_run(
+                run["run_id"],
+                {
+                    "phase": phase,
+                    "status": "RUNNING",
+                    "execution_step": "TRAIN",
+                    "progress": self._progress(progress_percent, phase, message),
+                    "stages": _stages(
+                        active_phase=phase,
+                        active_status="RUNNING",
+                        completed=completed,
+                    ),
+                    "updated_at": iso_now(),
+                },
+                bump_revision=False,
+            )
+        phase_events = await self.store.get_events(run["run_id"], types=["run.phase_changed.v1"])
+        if any(
+            event.get("payload", {}).get("phase") == phase
+            and event.get("payload", {}).get("status") == "RUNNING"
+            for event in phase_events
+        ):
+            return updated
+        return await self._emit(
+            updated,
+            "run.phase_changed.v1",
+            {"previous_phase": previous_phase, "phase": phase, "status": "RUNNING"},
+        )
+
+    async def _publish_backend_stage(
+        self,
+        run_id: str,
+        phase: str,
+        snapshot: dict[str, Any],
+        job: ExecutionJob,
+    ) -> None:
+        await self.store.renew_execution_job(
+            run_id,
+            lease_generation=int(job["lease_generation"]),
+            control_epoch=int(job["control_epoch"]),
+            lease_seconds=float(job.get("_lease_seconds", 30.0)),
+        )
+        async with self._visibility_lock:
+            run = await self.store.get_run(run_id)
+            if run is None or run.get("status") == "TERMINAL":
+                return
+            stage_events = await self.store.get_events(run_id, types=["run.stage_completed.v1"])
+            completed_phases = {
+                str(event.get("payload", {}).get("phase")) for event in stage_events
+            }
+
+            if phase == "PLAN":
+                if "PLAN" not in completed_phases:
+                    task = dict(snapshot["task"])
+                    split = dict(snapshot["split"])
+                    task_output = await self._output_for_type(run_id, "TASK_SPEC")
+                    if task_output is None:
+                        descriptor = self.backend_registry.get(run.get("backend_id")).descriptor
+                        task_output, run = await self._commit_output(
+                            run,
+                            output_type="TASK_SPEC",
+                            phase="PLAN",
+                            summary={
+                                "code": "TASK_SPEC_CONFIRMED",
+                                "message": "The bounded tabular task specification is frozen.",
+                                "severity": "INFO",
+                            },
+                            payload={
+                                "kind": "TASK_SPEC",
+                                "backend_id": descriptor.backend_id,
+                                "engine_version": descriptor.engine_version,
+                                "task_type": task["task_type"],
+                                "target_column_id": run["resolved_inputs"]["target_column"],
+                                "positive_class": task.get("positive_class"),
+                                "primary_metric": task["primary_metric"],
+                                "guardrail_metrics": [],
+                                "split_strategy": (
+                                    "STRATIFIED_HOLDOUT"
+                                    if task["task_type"] == "BINARY_CLASSIFICATION"
+                                    else "RANDOM_HOLDOUT"
+                                ),
+                                "confidence": 1.0,
+                                "assumptions": ["Rows were explicitly confirmed as i.i.d."],
+                                "confirmed_by": "USER",
+                            },
+                        )
+                    run = await self.store.update_run(
+                        run_id,
+                        {"task_spec_output_id": task_output["output_id"]},
+                        bump_revision=False,
+                    )
+                    split_output = await self._output_for_type(run_id, "SPLIT_MANIFEST")
+                    if split_output is None:
+                        split_bytes = json.dumps(
+                            split, sort_keys=True, separators=(",", ":")
+                        ).encode("utf-8")
+                        split_artifact = await self._create_artifact(
+                            run, "SPLIT_MANIFEST_JSON", "application/json", split_bytes
+                        )
+                        split_output, run = await self._commit_output(
+                            run,
+                            output_type="SPLIT_MANIFEST",
+                            phase="PLAN",
+                            summary={
+                                "code": "SPLIT_FROZEN",
+                                "message": "The development folds and sealed holdout are immutable.",
+                                "severity": "INFO",
+                            },
+                            payload={
+                                "kind": "SPLIT_MANIFEST",
+                                "strategy": split["strategy"],
+                                "train_rows": split["train_rows"],
+                                "validation_rows": split["validation_rows"],
+                                "test_rows": split["test_rows"],
+                                "leakage_checks": split["leakage_checks"],
+                            },
+                            artifact_refs=[self._artifact_ref(split_artifact)],
+                            lineage={"task_spec_output_id": task_output["output_id"]},
+                        )
+                        await self.store.update_artifact(
+                            split_artifact["artifact_id"],
+                            {"output_id": split_output["output_id"]},
+                        )
+                    run = await self.store.update_run(
+                        run_id,
+                        {"split_manifest_output_id": split_output["output_id"]},
+                        bump_revision=False,
+                    )
+                    run = await self._complete_stage(
+                        run,
+                        "PLAN",
+                        next_phase="TRAIN",
+                        output_refs=[
+                            self._output_ref(task_output),
+                            self._output_ref(split_output),
+                        ],
+                    )
+                await self._transition_running_phase(
+                    run,
+                    previous_phase="PLAN",
+                    phase="TRAIN",
+                    progress_percent=55,
+                    message="Evaluating bounded model candidates",
+                    completed={"INGEST", "PROFILE", "PLAN"},
+                )
+                return
+
+            if phase != "TRAIN":
+                raise RuntimeError(f"unsupported backend stage callback: {phase}")
+            if "TRAIN" not in completed_phases:
+                descriptor = self.backend_registry.get(run.get("backend_id")).descriptor
+                baseline = dict(snapshot["baseline"])
+                baseline_metric = baseline["primary_metric"]
+                baseline_value = baseline["cv_metrics"][baseline_metric]["mean"]
+                if await self._output_for_type(run_id, "BASELINE_RESULT") is None:
+                    _, run = await self._commit_output(
+                        run,
+                        output_type="BASELINE_RESULT",
+                        phase="TRAIN",
+                        summary={
+                            "code": "BASELINE_EVALUATED",
+                            "message": "The naive baseline was evaluated on development folds.",
+                            "severity": "INFO",
+                        },
+                        payload={
+                            "kind": "BASELINE_RESULT",
+                            "baselines": [
+                                {
+                                    "name": baseline["family"],
+                                    "metrics": [_metric(baseline_metric, baseline_value)],
+                                    "compute_credits": 0,
+                                }
+                            ],
+                        },
+                    )
+                experiment_id = f"exp_{run_id}"
+                for trial in snapshot["trials"]:
+                    trial_number = int(trial["trial_number"])
+                    if (
+                        await self._output_for_type(
+                            run_id, "TRIAL_RESULT", trial_number=trial_number
+                        )
+                        is not None
+                    ):
+                        continue
+                    metrics = []
+                    if trial["status"] == "SUCCEEDED":
+                        metric_name = trial["primary_metric"]
+                        metrics = [_metric(metric_name, trial["primary_score"])]
+                    _, run = await self._commit_output(
+                        run,
+                        output_type="TRIAL_RESULT",
+                        phase="TRAIN",
+                        summary={
+                            "code": "TRIAL_EVALUATED",
+                            "message": (f"{trial['family']} finished development-only evaluation."),
+                            "severity": ("INFO" if trial["status"] == "SUCCEEDED" else "WARNING"),
+                        },
+                        payload={
+                            "kind": "TRIAL_RESULT",
+                            "experiment_id": experiment_id,
+                            "trial_number": trial_number,
+                            "status": trial["status"],
+                            "backend_id": descriptor.backend_id,
+                            "engine_version": descriptor.engine_version,
+                            "model_family": trial["family"],
+                            "metrics": metrics,
+                            "compute_credits": 0,
+                            "normalized_config": trial.get("config"),
+                            "failure_code": trial.get("failure_code"),
+                        },
+                    )
+                training_outputs = [
+                    output
+                    for output in await self.store.list_outputs(run_id=run_id)
+                    if output.get("phase") == "TRAIN"
+                ]
+                run = await self._complete_stage(
+                    run,
+                    "TRAIN",
+                    next_phase="EVALUATE",
+                    output_refs=[self._output_ref(output) for output in training_outputs],
+                )
+            await self._transition_running_phase(
+                run,
+                previous_phase="TRAIN",
+                phase="EVALUATE",
+                progress_percent=80,
+                message="Evaluating the sealed holdout and rendering evidence",
+                completed={"INGEST", "PROFILE", "PLAN", "TRAIN"},
+            )
+
+    async def _execute_training(self, run: dict[str, Any], job: ExecutionJob) -> WorkerResult:
         path, media_type = self._dataset_path(run)
         async with self._visibility_lock:
             current = await self.store.get_run(run["run_id"])
@@ -606,25 +888,29 @@ class DurableWorkflowService(WorkflowService):
             current = await self.store.update_run(
                 current["run_id"],
                 {
-                    "phase": "TRAIN",
+                    "phase": "PLAN",
                     "status": "RUNNING",
                     "execution_step": "TRAIN",
-                    "progress": self._progress(55, "TRAIN", "Evaluating bounded model candidates"),
+                    "progress": self._progress(42, "PLAN", "Freezing task and data split"),
                     "stages": _stages(
-                        active_phase="TRAIN",
+                        active_phase="PLAN",
                         active_status="RUNNING",
-                        completed={"INGEST", "PROFILE", "PLAN"},
+                        completed={"INGEST", "PROFILE"},
                     ),
                     "updated_at": iso_now(),
                 },
                 bump_revision=False,
             )
-            await self._emit(
-                current,
-                "run.phase_changed.v1",
-                {"previous_phase": "PLAN", "phase": "TRAIN", "status": "RUNNING"},
-            )
             resolved = dict(current.get("resolved_inputs", {}))
+
+        loop = asyncio.get_running_loop()
+
+        def stage_callback(phase: str, snapshot: dict[str, Any]) -> None:
+            future = asyncio.run_coroutine_threadsafe(
+                self._publish_backend_stage(run["run_id"], phase, snapshot, job),
+                loop,
+            )
+            future.result()
 
         try:
             result = await asyncio.to_thread(
@@ -640,6 +926,7 @@ class DurableWorkflowService(WorkflowService):
                 seed=1729,
                 max_trials=int(current["budget"]["max_trials"]),
                 max_wall_time_seconds=int(current["budget"]["max_wall_time_seconds"]),
+                stage_callback=stage_callback,
             )
         except PositiveClassRequiredError as error:
             async with self._visibility_lock:
@@ -664,6 +951,12 @@ class DurableWorkflowService(WorkflowService):
             return COMPLETE
 
         async with self._visibility_lock:
+            await self.store.renew_execution_job(
+                run["run_id"],
+                lease_generation=int(job["lease_generation"]),
+                control_epoch=int(job["control_epoch"]),
+                lease_seconds=float(job.get("_lease_seconds", 30.0)),
+            )
             current = await self.store.get_run(run["run_id"])
             if current is None or current["status"] == "TERMINAL":
                 return COMPLETE
@@ -674,257 +967,250 @@ class DurableWorkflowService(WorkflowService):
 
     async def _publish_result(self, run: dict[str, Any], result: TabularAutoMLResult) -> None:
         run_id = run["run_id"]
-        resolved = run["resolved_inputs"]
         backend_descriptor = self.backend_registry.get(run.get("backend_id")).descriptor
-        task_output, run = await self._commit_output(
-            run,
-            output_type="TASK_SPEC",
-            phase="PLAN",
-            summary={
-                "code": "TASK_SPEC_CONFIRMED",
-                "message": "The bounded tabular task specification is frozen.",
-                "severity": "INFO",
-            },
-            payload={
-                "kind": "TASK_SPEC",
-                "backend_id": backend_descriptor.backend_id,
-                "engine_version": backend_descriptor.engine_version,
-                "task_type": result.task["task_type"],
-                "target_column_id": resolved["target_column"],
-                "positive_class": result.task.get("positive_class"),
-                "primary_metric": result.task["primary_metric"],
-                "guardrail_metrics": [],
-                "split_strategy": (
-                    "STRATIFIED_HOLDOUT"
-                    if result.task["task_type"] == "BINARY_CLASSIFICATION"
-                    else "RANDOM_HOLDOUT"
-                ),
-                "confidence": 1.0,
-                "assumptions": ["Rows were explicitly confirmed as i.i.d."],
-                "confirmed_by": "USER",
-            },
-        )
-        run = await self.store.update_run(
-            run_id, {"task_spec_output_id": task_output["output_id"]}, bump_revision=False
-        )
-
-        split_bytes = json.dumps(result.split, sort_keys=True, separators=(",", ":")).encode(
-            "utf-8"
-        )
-        split_artifact = await self._create_artifact(
-            run, "SPLIT_MANIFEST_JSON", "application/json", split_bytes
-        )
-        split_output, run = await self._commit_output(
-            run,
-            output_type="SPLIT_MANIFEST",
-            phase="PLAN",
-            summary={
-                "code": "SPLIT_FROZEN",
-                "message": "The development folds and sealed holdout are immutable.",
-                "severity": "INFO",
-            },
-            payload={
-                "kind": "SPLIT_MANIFEST",
-                "strategy": result.split["strategy"],
-                "train_rows": result.split["train_rows"],
-                "validation_rows": result.split["validation_rows"],
-                "test_rows": result.split["test_rows"],
-                "leakage_checks": result.split["leakage_checks"],
-            },
-            artifact_refs=[self._artifact_ref(split_artifact)],
-            lineage={"task_spec_output_id": task_output["output_id"]},
-        )
-        await self.store.update_artifact(
-            split_artifact["artifact_id"], {"output_id": split_output["output_id"]}
-        )
-        run = await self.store.update_run(
-            run_id,
-            {"split_manifest_output_id": split_output["output_id"]},
-            bump_revision=False,
-        )
-
-        baseline_metric = result.baseline["primary_metric"]
-        baseline_value = result.baseline["cv_metrics"][baseline_metric]["mean"]
-        _, run = await self._commit_output(
-            run,
-            output_type="BASELINE_RESULT",
-            phase="TRAIN",
-            summary={
-                "code": "BASELINE_EVALUATED",
-                "message": "The naive baseline was evaluated on development folds.",
-                "severity": "INFO",
-            },
-            payload={
-                "kind": "BASELINE_RESULT",
-                "baselines": [
-                    {
-                        "name": result.baseline["family"],
-                        "metrics": [_metric(baseline_metric, baseline_value)],
-                        "compute_credits": 0,
-                    }
-                ],
-            },
-        )
-        experiment_id = f"exp_{run_id}"
-        for trial in result.trials:
-            metrics = []
-            if trial["status"] == "SUCCEEDED":
-                metric_name = trial["primary_metric"]
-                metrics = [_metric(metric_name, trial["primary_score"])]
-            _, run = await self._commit_output(
-                run,
-                output_type="TRIAL_RESULT",
-                phase="TRAIN",
-                summary={
-                    "code": "TRIAL_EVALUATED",
-                    "message": f"{trial['family']} finished development-only evaluation.",
-                    "severity": "INFO" if trial["status"] == "SUCCEEDED" else "WARNING",
-                },
-                payload={
-                    "kind": "TRIAL_RESULT",
-                    "experiment_id": experiment_id,
-                    "trial_number": trial["trial_number"],
-                    "status": trial["status"],
-                    "backend_id": backend_descriptor.backend_id,
-                    "engine_version": backend_descriptor.engine_version,
-                    "model_family": trial["family"],
-                    "metrics": metrics,
-                    "compute_credits": 0,
-                    "normalized_config": trial.get("config"),
-                    "failure_code": trial.get("failure_code"),
-                },
-            )
+        task_output = await self._output_for_type(run_id, "TASK_SPEC")
+        split_output = await self._output_for_type(run_id, "SPLIT_MANIFEST")
+        if task_output is None or split_output is None:
+            raise RuntimeError("PLAN stage outputs must be durable before evaluation publishing")
 
         primary = result.evaluation["primary_metric"]
         baseline_holdout = result.evaluation["all_metrics"]["baseline"][primary]
         candidate_holdout = result.evaluation["all_metrics"]["candidate"][primary]
-        evaluation_output, run = await self._commit_output(
-            run,
-            output_type="EVALUATION_REPORT",
-            phase="EVALUATE",
-            summary={
-                "code": "CANDIDATE_EVALUATED",
-                "message": "The frozen candidate was evaluated once on the sealed holdout.",
-                "severity": "INFO",
-            },
-            payload={
-                "kind": "EVALUATION_REPORT",
-                "primary_metric": primary,
-                "baseline": _metric(primary, baseline_holdout),
-                "candidate": _metric(primary, candidate_holdout),
-                "paired_delta": _metric(primary, result.evaluation["paired_improvement"]),
-                "guardrails_passed": False,
-                "eligible_candidate": False,
-                "failed_gates": ["PRODUCTION_ELIGIBILITY_NOT_EVALUATED"],
-                "limitations": result.evaluation["limitations"],
-            },
-        )
-
-        model_artifact = await self._create_artifact(
-            run,
-            backend_descriptor.artifact_kind,
-            backend_descriptor.artifact_media_type,
-            result.model_bytes,
-        )
-        model_id = self.store.new_id("model")
-        exportable = bool(result.model_metadata.get("exportable", True))
-        model_card_output, run = await self._commit_output(
-            run,
-            output_type="MODEL_CARD",
-            phase="PACKAGE",
-            summary={
-                "code": (
-                    "EVALUATED_MODEL_PACKAGED" if exportable else "EVALUATION_METADATA_AVAILABLE"
-                ),
-                "message": (
-                    "A trusted-store evaluated model package is available."
-                    if exportable
-                    else "Data-free backend evaluation metadata is available; no model was exported."
-                ),
-                "severity": "WARNING",
-            },
-            payload={
-                "kind": "MODEL_CARD",
-                "model_id": model_id,
-                "backend_id": backend_descriptor.backend_id,
-                "backend_version": backend_descriptor.backend_version,
-                "engine_version": backend_descriptor.engine_version,
-                "intended_use": (
-                    "Offline evaluation only; production use is not approved."
-                    if exportable
-                    else "Evaluation evidence only; this Run did not export a loadable model."
-                ),
-                "limitations": result.evaluation["limitations"],
-                "metrics": [_metric(primary, candidate_holdout)],
-            },
-            artifact_refs=[self._artifact_ref(model_artifact)],
-            lineage={"evidence_refs": [evaluation_output["output_id"]]},
-        )
-        await self.store.update_artifact(
-            model_artifact["artifact_id"], {"output_id": model_card_output["output_id"]}
-        )
-
-        report_artifact = await self._create_artifact(
-            run, "RUN_REPORT_JSON", "application/json", result.report_bytes
-        )
-        report_output, run = await self._commit_output(
-            run,
-            output_type="RUN_REPORT",
-            phase="PACKAGE",
-            summary={
-                "code": "REAL_RUN_COMPLETE",
-                "message": "Real data was evaluated by the bounded tabular engine.",
-                "severity": "INFO",
-            },
-            payload={
-                "kind": "RUN_REPORT",
-                "summary": "A deterministic evaluated candidate and evidence bundle were produced.",
-                "recommendation": "Review limitations and define production quality gates.",
-                "evidence_refs": [
-                    task_output["output_id"],
-                    split_output["output_id"],
-                    evaluation_output["output_id"],
-                    model_card_output["output_id"],
+        evaluation_output = await self._output_for_type(run_id, "EVALUATION_REPORT")
+        if evaluation_output is None:
+            visualization_artifacts: list[dict[str, Any]] = []
+            visualization_records: list[dict[str, Any]] = []
+            for visualization in result.visualizations:
+                if visualization.content is None:
+                    visualization_records.append(visualization.metadata())
+                    continue
+                try:
+                    artifact = await self._create_artifact(
+                        run,
+                        visualization.artifact_kind,
+                        "image/png",
+                        visualization.content,
+                    )
+                except Exception:
+                    record = visualization.metadata()
+                    record.update(
+                        {
+                            "status": "FAILED",
+                            "artifact_id": None,
+                            "media_type": None,
+                            "size_bytes": None,
+                            "sha256": None,
+                            "failure_code": "ARTIFACT_COMMIT_FAILED",
+                        }
+                    )
+                    visualization_records.append(record)
+                    continue
+                visualization_artifacts.append(artifact)
+                visualization_records.append(
+                    visualization.metadata(artifact_id=artifact["artifact_id"])
+                )
+            generated_count = sum(item["status"] == "GENERATED" for item in visualization_records)
+            visualization_state = (
+                "COMPLETE"
+                if visualization_records and generated_count == len(visualization_records)
+                else "PARTIAL"
+                if generated_count
+                else "UNAVAILABLE"
+            )
+            evaluation_output, run = await self._commit_output(
+                run,
+                output_type="EVALUATION_REPORT",
+                phase="EVALUATE",
+                summary={
+                    "code": "CANDIDATE_EVALUATED",
+                    "message": "The frozen candidate was evaluated once on the sealed holdout.",
+                    "severity": "INFO",
+                },
+                payload={
+                    "kind": "EVALUATION_REPORT",
+                    "primary_metric": primary,
+                    "baseline": _metric(primary, baseline_holdout),
+                    "candidate": _metric(primary, candidate_holdout),
+                    "paired_delta": _metric(primary, result.evaluation["paired_improvement"]),
+                    "guardrails_passed": False,
+                    "eligible_candidate": False,
+                    "failed_gates": ["PRODUCTION_ELIGIBILITY_NOT_EVALUATED"],
+                    "limitations": result.evaluation["limitations"],
+                    "visualization_status": visualization_state,
+                    "visualizations": visualization_records,
+                },
+                artifact_refs=[
+                    self._artifact_ref(artifact) for artifact in visualization_artifacts
                 ],
-            },
-            artifact_refs=[self._artifact_ref(report_artifact)],
-            lineage={"evidence_refs": [evaluation_output["output_id"]]},
+            )
+            for artifact in visualization_artifacts:
+                await self.store.update_artifact(
+                    artifact["artifact_id"], {"output_id": evaluation_output["output_id"]}
+                )
+        else:
+            visualization_records = list(
+                evaluation_output.get("payload", {}).get("visualizations", [])
+            )
+            visualization_state = str(
+                evaluation_output.get("payload", {}).get("visualization_status", "UNAVAILABLE")
+            )
+        visualization_refs = list(evaluation_output.get("artifact_refs", []))
+
+        run = await self._complete_stage(
+            run,
+            "EVALUATE",
+            next_phase="PACKAGE",
+            output_refs=[self._output_ref(evaluation_output)],
         )
-        await self.store.update_artifact(
-            report_artifact["artifact_id"], {"output_id": report_output["output_id"]}
+        run = await self._transition_running_phase(
+            run,
+            previous_phase="EVALUATE",
+            phase="PACKAGE",
+            progress_percent=92,
+            message="Packaging result artifacts",
+            completed={"INGEST", "PROFILE", "PLAN", "TRAIN", "EVALUATE"},
         )
 
-        package_ref = self._artifact_ref(model_artifact)
+        exportable = bool(result.model_metadata.get("exportable", True))
+        model_card_output = await self._output_for_type(run_id, "MODEL_CARD")
+        if model_card_output is None:
+            model_artifact = await self._create_artifact(
+                run,
+                backend_descriptor.artifact_kind,
+                backend_descriptor.artifact_media_type,
+                result.model_bytes,
+            )
+            model_id = self.store.new_id("model")
+            model_card_output, run = await self._commit_output(
+                run,
+                output_type="MODEL_CARD",
+                phase="PACKAGE",
+                summary={
+                    "code": (
+                        "EVALUATED_MODEL_PACKAGED"
+                        if exportable
+                        else "EVALUATION_METADATA_AVAILABLE"
+                    ),
+                    "message": (
+                        "A trusted-store evaluated model package is available."
+                        if exportable
+                        else "Data-free backend evaluation metadata is available; no model was exported."
+                    ),
+                    "severity": "WARNING",
+                },
+                payload={
+                    "kind": "MODEL_CARD",
+                    "model_id": model_id,
+                    "backend_id": backend_descriptor.backend_id,
+                    "backend_version": backend_descriptor.backend_version,
+                    "engine_version": backend_descriptor.engine_version,
+                    "intended_use": (
+                        "Offline evaluation only; production use is not approved."
+                        if exportable
+                        else "Evaluation evidence only; this Run did not export a loadable model."
+                    ),
+                    "limitations": result.evaluation["limitations"],
+                    "metrics": [_metric(primary, candidate_holdout)],
+                },
+                artifact_refs=[self._artifact_ref(model_artifact)],
+                lineage={"evidence_refs": [evaluation_output["output_id"]]},
+            )
+            await self.store.update_artifact(
+                model_artifact["artifact_id"], {"output_id": model_card_output["output_id"]}
+            )
+        else:
+            model_id = str(model_card_output["payload"]["model_id"])
+        model_artifact_ref = dict(model_card_output["artifact_refs"][0])
+
+        report_output = await self._output_for_type(run_id, "RUN_REPORT")
+        if report_output is None:
+            report_document = json.loads(result.report_bytes.decode("utf-8"))
+            report_document["evaluation"]["visualization_status"] = visualization_state
+            report_document["evaluation"]["visualizations"] = visualization_records
+            report_bytes = json.dumps(
+                report_document,
+                ensure_ascii=True,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            report_artifact = await self._create_artifact(
+                run, "RUN_REPORT_JSON", "application/json", report_bytes
+            )
+            report_output, run = await self._commit_output(
+                run,
+                output_type="RUN_REPORT",
+                phase="PACKAGE",
+                summary={
+                    "code": "REAL_RUN_COMPLETE",
+                    "message": "Real data was evaluated by the bounded tabular engine.",
+                    "severity": "INFO",
+                },
+                payload={
+                    "kind": "RUN_REPORT",
+                    "summary": "A deterministic evaluated candidate and evidence bundle were produced.",
+                    "recommendation": "Review limitations and define production quality gates.",
+                    "evidence_refs": [
+                        task_output["output_id"],
+                        split_output["output_id"],
+                        evaluation_output["output_id"],
+                        model_card_output["output_id"],
+                    ],
+                },
+                artifact_refs=[self._artifact_ref(report_artifact)],
+                lineage={"evidence_refs": [evaluation_output["output_id"]]},
+            )
+            await self.store.update_artifact(
+                report_artifact["artifact_id"], {"output_id": report_output["output_id"]}
+            )
+
+        package_outputs = [
+            output
+            for output in await self.store.list_outputs(run_id=run_id)
+            if output.get("phase") == "PACKAGE"
+        ]
         pending_candidate = {
             "model_id": model_id,
             "run_id": run_id,
             "status": "ELIGIBLE_CANDIDATE",
             "signature": self._model_signature(run, result),
             "model_card_output_id": model_card_output["output_id"],
-            "package_artifact_ref": package_ref,
+            "package_artifact_ref": model_artifact_ref,
         }
         if run.get("autonomy", {}).get("production_deploy") == "REQUIRE_APPROVAL" and exportable:
-            approval_id = self.store.new_id("approval")
-            approval = await self.store.create_approval(
-                run_id,
-                {
-                    "approval_id": approval_id,
-                    "tenant_id": run["tenant_id"],
-                    "run_revision": run["run_revision"],
-                    "evidence_version": 1,
-                    "kind": "PRODUCTION_DEPLOY",
-                    "status": "OPEN",
-                    "evidence_refs": [
-                        evaluation_output["output_id"],
-                        model_card_output["output_id"],
-                        report_output["output_id"],
-                    ],
-                    "decision_reason": None,
-                    "created_at": iso_now(),
-                    "expires_at": (utcnow() + timedelta(days=7)).isoformat().replace("+00:00", "Z"),
-                },
+            approval = next(
+                (
+                    item
+                    for item in await self.store.list_approvals(run_id)
+                    if item.get("kind") == "PRODUCTION_DEPLOY" and item.get("status") == "OPEN"
+                ),
+                None,
             )
-            waiting = await self.store.update_run(
+            if approval is None:
+                approval_id = self.store.new_id("approval")
+                approval = await self.store.create_approval(
+                    run_id,
+                    {
+                        "approval_id": approval_id,
+                        "tenant_id": run["tenant_id"],
+                        "run_revision": run["run_revision"],
+                        "evidence_version": 1,
+                        "kind": "PRODUCTION_DEPLOY",
+                        "status": "OPEN",
+                        "evidence_refs": [
+                            evaluation_output["output_id"],
+                            model_card_output["output_id"],
+                            report_output["output_id"],
+                        ],
+                        "decision_reason": None,
+                        "created_at": iso_now(),
+                        "expires_at": (utcnow() + timedelta(days=7))
+                        .isoformat()
+                        .replace("+00:00", "Z"),
+                    },
+                )
+            approval_id = str(approval["approval_id"])
+            await self.store.mutate_run_with_event(
                 run_id,
                 {
                     "phase": "PACKAGE",
@@ -940,24 +1226,26 @@ class DurableWorkflowService(WorkflowService):
                     "pending_model_candidate": pending_candidate,
                     "updated_at": iso_now(),
                 },
+                {
+                    "schema_version": "1.0",
+                    "occurred_at": iso_now(),
+                    "type": "approval.requested.v1",
+                    "payload": {
+                        "approval_id": approval_id,
+                        "href": f"/v1/runs/{run_id}/approvals",
+                    },
+                    "links": {"run": f"/v1/runs/{run_id}"},
+                },
                 expected_revision=run["run_revision"],
                 bump_revision=True,
-            )
-            await self._emit(
-                waiting,
-                "approval.requested.v1",
-                {
-                    "approval_id": approval["approval_id"],
-                    "href": f"/v1/runs/{run_id}/approvals",
-                },
             )
             return
 
         outputs = await self.store.list_outputs(run_id=run_id)
-        await self.store.set_result(
+        completed_at = iso_now()
+        await self.store.finalize_run_with_result(
             run_id,
-            {
-                "result_manifest_id": self.store.new_id("result"),
+            result={
                 "run_id": run_id,
                 "outcome": "SUCCEEDED",
                 "model_disposition": "NO_ELIGIBLE_MODEL",
@@ -966,6 +1254,7 @@ class DurableWorkflowService(WorkflowService):
                 "backend_version": backend_descriptor.backend_version,
                 "engine_version": backend_descriptor.engine_version,
                 "output_refs": [self._output_ref(output) for output in outputs],
+                "visualization_refs": visualization_refs,
                 "partial": False,
                 "eligible_model": None,
                 "reason": {
@@ -976,12 +1265,9 @@ class DurableWorkflowService(WorkflowService):
                     "evidence_refs": [evaluation_output["output_id"]],
                     "remediation": ["Define quality and risk gates before model registration."],
                 },
-                "completed_at": iso_now(),
+                "completed_at": completed_at,
             },
-        )
-        final = await self.store.update_run(
-            run_id,
-            {
+            run_updates={
                 "phase": "PACKAGE",
                 "status": "TERMINAL",
                 "outcome": "SUCCEEDED",
@@ -1002,15 +1288,35 @@ class DurableWorkflowService(WorkflowService):
                         "limit": run["budget_usage"]["trials"]["limit"],
                     },
                 },
-                "updated_at": iso_now(),
+                "updated_at": completed_at,
             },
             expected_revision=run["run_revision"],
-            bump_revision=True,
-        )
-        await self._emit(
-            final,
-            "run.completed.v1",
-            {"outcome": "SUCCEEDED", "result_href": f"/v1/runs/{run_id}/result"},
+            events=[
+                {
+                    "schema_version": "1.0",
+                    "occurred_at": completed_at,
+                    "type": "run.stage_completed.v1",
+                    "payload": {
+                        "phase": "PACKAGE",
+                        "status": "COMPLETED",
+                        "completed_at": completed_at,
+                        "progress_percent": 100.0,
+                        "output_refs": [self._output_ref(output) for output in package_outputs],
+                        "next_phase": None,
+                    },
+                    "links": {"run": f"/v1/runs/{run_id}"},
+                },
+                {
+                    "schema_version": "1.0",
+                    "occurred_at": completed_at,
+                    "type": "run.completed.v1",
+                    "payload": {
+                        "outcome": "SUCCEEDED",
+                        "result_href": f"/v1/runs/{run_id}/result",
+                    },
+                    "links": {"run": f"/v1/runs/{run_id}"},
+                },
+            ],
         )
 
     @staticmethod
@@ -1047,6 +1353,15 @@ class DurableWorkflowService(WorkflowService):
         media_type: str,
         content: bytes,
     ) -> dict[str, Any]:
+        content_sha256 = sha256(content).hexdigest()
+        for artifact in await self.store.list_artifacts(run_id=run["run_id"]):
+            if (
+                artifact.get("kind") == kind
+                and artifact.get("media_type") == media_type
+                and artifact.get("sha256") == content_sha256
+                and artifact.get("state") == "COMMITTED"
+            ):
+                return artifact
         artifact_id = self.store.new_id("artifact")
         blob = await self.blob_store.put_artifact(
             tenant_id=run["tenant_id"],
@@ -1075,7 +1390,7 @@ class DurableWorkflowService(WorkflowService):
                     "task_spec_output_id": run.get("task_spec_output_id"),
                     "split_manifest_output_id": run.get("split_manifest_output_id"),
                     "policy_version": "policy.m2-local",
-                    "method_version": "tabular-sklearn.v1",
+                    "method_version": run.get("method_version", "tabular-sklearn.v1"),
                     "parent_refs": [],
                     "evidence_refs": [],
                 },
@@ -1097,28 +1412,31 @@ class DurableWorkflowService(WorkflowService):
         message: str,
         retriable: bool,
     ) -> None:
-        failure_output, run = await self._commit_output(
-            run,
-            output_type="FAILURE_REPORT",
-            phase=run["phase"],
-            summary={"code": code, "message": message, "severity": "ERROR"},
-            payload={
-                "kind": "FAILURE_REPORT",
-                "failure_code": code,
-                "phase": run["phase"],
-                "message": message,
-                "retriable": retriable,
-                "partial_output_ids": [
-                    output["output_id"] for output in await self.store.list_outputs(run["run_id"])
-                ],
-                "remediation": ["Correct the dataset or task answers and create a new Run."],
-            },
-        )
+        failure_output = await self._output_for_type(run["run_id"], "FAILURE_REPORT")
+        if failure_output is None:
+            failure_output, run = await self._commit_output(
+                run,
+                output_type="FAILURE_REPORT",
+                phase=run["phase"],
+                summary={"code": code, "message": message, "severity": "ERROR"},
+                payload={
+                    "kind": "FAILURE_REPORT",
+                    "failure_code": code,
+                    "phase": run["phase"],
+                    "message": message,
+                    "retriable": retriable,
+                    "partial_output_ids": [
+                        output["output_id"]
+                        for output in await self.store.list_outputs(run["run_id"])
+                    ],
+                    "remediation": ["Correct the dataset or task answers and create a new Run."],
+                },
+            )
         outputs = await self.store.list_outputs(run["run_id"])
-        await self.store.set_result(
+        completed_at = iso_now()
+        await self.store.finalize_run_with_result(
             run["run_id"],
-            {
-                "result_manifest_id": self.store.new_id("result"),
+            result={
                 "run_id": run["run_id"],
                 "outcome": "FAILED",
                 "model_disposition": "INCOMPLETE",
@@ -1134,32 +1452,32 @@ class DurableWorkflowService(WorkflowService):
                     "evidence_refs": [failure_output["output_id"]],
                     "remediation": ["Correct the dataset or task answers and create a new Run."],
                 },
-                "completed_at": iso_now(),
+                "completed_at": completed_at,
             },
-        )
-        terminal = await self.store.update_run(
-            run["run_id"],
-            {
+            run_updates={
                 "status": "TERMINAL",
                 "outcome": "FAILED",
                 "execution_step": "FAILED",
                 "blocking": {"decision_packet_ids": [], "approval_ids": []},
                 "available_actions": [],
                 "latest_output_refs": [self._output_ref(failure_output)],
-                "updated_at": iso_now(),
+                "updated_at": completed_at,
             },
             expected_revision=run["run_revision"],
-            bump_revision=True,
-        )
-        await self._emit(
-            terminal,
-            "run.failed.v1",
-            {
-                "outcome": "FAILED",
-                "failure_code": code,
-                "retriable": retriable,
-                "result_href": f"/v1/runs/{run['run_id']}/result",
-            },
+            events=[
+                {
+                    "schema_version": "1.0",
+                    "occurred_at": completed_at,
+                    "type": "run.failed.v1",
+                    "payload": {
+                        "outcome": "FAILED",
+                        "failure_code": code,
+                        "retriable": retriable,
+                        "result_href": f"/v1/runs/{run['run_id']}/result",
+                    },
+                    "links": {"run": f"/v1/runs/{run['run_id']}"},
+                }
+            ],
         )
 
 

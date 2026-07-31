@@ -47,7 +47,7 @@ Accept: text/event-stream                       # SSE 事件流
 | artifact 下载 | 可用 | 通过短期 ticket 下载，支持 Range 和 SHA-256 校验 |
 | experiments | 兼容占位 | 列表返回空页；按 ID 查询返回 `404` |
 | approvals/models/deletions | 可用 | 生产部署审批、候选模型读取和删除任务跟踪 |
-| Webhook 管理与 outbox | 可用 | endpoint 管理、delivery 查询和人工重投；HTTP dispatcher 需独立部署 |
+| Webhook 管理与 outbox | 可用 | endpoint 管理、内置 HTTP 投递、delivery 查询、熔断和人工重投 |
 
 ## 4. 路由明细
 
@@ -258,6 +258,15 @@ curl -sS -i "$AUTOML_API/v1/dataset-versions/dsv_000000000001" \
 
 用途：创建 AutoML Run。`objective.backend_id` 可选择 `sklearn`、`autogluon` 或 `tabpfn`；省略时使用 manifest 的 `default_backend_id`。
 
+Callback 字段：
+
+- `callback_url`：可选；必须与同租户 ACTIVE endpoint 的 URL 完全一致。只传 URL 时必须唯一匹配。
+- `webhook_endpoint_ids`：可选；只传 ID 时可绑定多个 endpoint。
+- 同时传入时，ID 集合必须恰好只包含 `callback_url` 匹配的 endpoint；否则返回
+  `422 callback_endpoint_mismatch`。未注册 URL 返回 `422 callback_endpoint_not_registered`，非 ACTIVE
+  endpoint 返回 `409 webhook_endpoint_not_active`。
+- 两个字段都省略时，该 Run 不产生 delivery；endpoint 的 `event_types` 仍会过滤事件。
+
 认证：需要 Bearer；写请求需要 `Idempotency-Key`。
 
 成功响应：`202 RunSnapshot`，返回 `ETag` 和 `Retry-After: 1`。
@@ -465,6 +474,10 @@ MODEL_CARD
 RUN_REPORT
 FAILURE_REPORT
 ```
+
+`EVALUATION_REPORT.payload.visualizations[]` 逐图返回 `GENERATED/SKIPPED/FAILED`、图类型、
+封存 holdout 样本数和错误码。成功 PNG 同时位于该 Output 的 `artifact_refs[]` 和终态
+`RunResult.visualization_refs[]`。下载必须继续使用 artifact ticket，并校验 ETag、大小和 SHA-256。
 
 ### 4.19 GET `/v1/runs/{run_id}/outputs/{output_id}`
 
@@ -737,12 +750,16 @@ curl -sS -i "$AUTOML_API/v1/models/mdl_000000000001" \
 ### 4.35 Webhook 管理路由组 `/v1/webhook-endpoints...`
 
 用途：Webhook 管理和投递查询。当前 API 已支持 endpoint 创建、列表、读取、删除、
-密钥轮换、启用、delivery outbox 查询和人工重投；真实 HTTP 投递 dispatcher 可作为独立
-worker 消费 outbox。
+密钥轮换、启用、delivery outbox 查询和人工重投；API 进程内的 durable worker 会消费 outbox
+并实际发送 HMAC 签名的 HTTP 回调。
 
-注意：0.8.0 镜像不包含 HTTP dispatcher。仅创建 endpoint 不会产生网络回调；未部署独立
-dispatcher 时必须使用 RunEvent JSON 分页或 SSE。canonical OpenAPI 的 callback 段是外部
-dispatcher 与接收端的互操作协议，不代表 API 容器会自行发送。
+创建 endpoint 后还必须在 `POST /v1/runs` 中传入完全一致的 `callback_url`，也可以同时传入
+对应的 `webhook_endpoint_ids`。未绑定 endpoint 的 Run 不会广播到租户其他 endpoint。
+callback 是至少一次投递，接收方按 `X-AutoML-Delivery-Id` 去重。
+投递耗尽后人工重投窗口默认为 30 天，由
+`AUTOML_WEBHOOK_REDELIVERY_RETENTION_DAYS` 独立配置；过期调用重投路由返回
+`410 webhook_redelivery_expired`。`:enable` 后会跳过已耗尽记录，并按顺序继续后续
+未完成投递。
 
 认证：需要 Bearer；生产模式下仍会按具体 operation 做 scope 检查。
 
@@ -769,7 +786,7 @@ curl -sS -i -X POST "$AUTOML_API/v1/webhook-endpoints" \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://example.internal/automl-events",
-    "event_types": ["run.completed.v1", "run.failed.v1"]
+    "event_types": ["run.stage_completed.v1", "run.completed.v1", "run.failed.v1"]
   }'
 ```
 
@@ -804,16 +821,17 @@ curl -sS -i "$AUTOML_API/v1/deletions/del_000000000001" \
 推荐接入顺序：
 
 1. `GET /v1/agent/manifest`：确认服务版本、后端 readiness 和限制。
-2. `POST /v1/datasets`：创建上传会话。
-3. `PUT /v1/dataset-versions/{dataset_version_id}/upload-parts/{part_number}`：上传数据字节。
-4. `POST /v1/dataset-versions/{dataset_version_id}:finalize`：完成数据版本。
-5. `POST /v1/runs`：创建 Run。
-6. `GET /v1/runs/{run_id}` 或 `GET /v1/runs/{run_id}/events`：观察进度。
-7. `GET /v1/runs/{run_id}/decision-packets?status=OPEN`：如进入 `WAITING_USER`，读取问题。
-8. `POST /v1/runs/{run_id}/decision-packets/{wait_set_id}:answer`：提交结构化答案。
-9. `GET /v1/runs/{run_id}/outputs`：读取中间和终态输出。
-10. `GET /v1/runs/{run_id}/result`：读取终态结果。
-11. `GET /v1/artifacts/{artifact_id}`、`POST /v1/artifacts/{artifact_id}:download`、`GET /v1/artifact-downloads/{token}`：下载产物。
+2. 需要离线 callback 时，先 `POST /v1/webhook-endpoints`，安全保存仅返回一次的签名密钥。
+3. `POST /v1/datasets`：创建上传会话。
+4. `PUT /v1/dataset-versions/{dataset_version_id}/upload-parts/{part_number}`：上传数据字节。
+5. `POST /v1/dataset-versions/{dataset_version_id}:finalize`：完成数据版本。
+6. `POST /v1/runs`：用 `callback_url`/`webhook_endpoint_ids` 绑定本 Run，不会广播到租户其他 endpoint。
+7. 验签并按 delivery ID 幂等处理 `run.stage_completed.v1`；用 JSON events/SSE 补拉。
+8. `GET /v1/runs/{run_id}` 或 `GET /v1/runs/{run_id}/events`：观察权威进度。
+9. `GET /v1/runs/{run_id}/decision-packets?status=OPEN`：如进入 `WAITING_USER`，读取问题。
+10. `POST /v1/runs/{run_id}/decision-packets/{wait_set_id}:answer`：提交结构化答案。
+11. `GET /v1/runs/{run_id}/outputs` 与 `/result`：读取输出、终态和 `visualization_refs`。
+12. 使用 artifact metadata/ticket/data-plane URL 下载并校验产物。
 
 ## 6. 常见错误
 

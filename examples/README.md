@@ -10,6 +10,7 @@ Agent token 和 Human token。
 | --- | --- |
 | `python/sdk_guided_workflow.py` | 使用官方 Python SDK 完成上传、中断、回答、结果和 artifact |
 | `python/http_guided_workflow.py` | 只使用 HTTP 客户端逐步调用原始 API 路由 |
+| `python/webhook_receiver.py` | 验证 raw-body HMAC、300 秒重放窗口和 delivery ID 的 callback receiver |
 | `data/customer_churn.csv` | 合成二分类数据，不含真实个人信息 |
 | `data/regression.csv` | 合成回归数据 |
 | `requests/sklearn-guided.json` | sklearn 人工确认案例请求体 |
@@ -41,6 +42,23 @@ AUTOML_API_URL=http://127.0.0.1:8000 \
 AUTOML_TOKEN=local-development-token \
 uv run python examples/python/http_guided_workflow.py
 ```
+
+回归示例可直接复用同一脚本，并会下载 RMSE/观测-预测/残差/残差分布图：
+
+```bash
+uv run python examples/python/http_guided_workflow.py \
+  --backend tabpfn \
+  --task-type REGRESSION \
+  --primary-metric rmse \
+  --target target \
+  --data examples/data/regression.csv \
+  --preconfirm-objective \
+  --output-dir example-output/tabpfn-regression
+```
+
+`--preconfirm-objective` 只适用于调用方已经从用户处取得 target 与 i.i.d. 明确确认的情况；省略时，
+脚本会按 GUIDED 流程等待 DecisionPacket，并要求通过 `AUTOML_HUMAN_TOKEN` 提供具有人类委托声明的
+令牌。Agent 的 `client_credentials` token 不能代替人完成该确认。
 
 本地开发 profile 以 token 哈希作为合成 tenant，因此 Agent 和 Human 应使用同一个 token。输出写入
 `example-output/`。
@@ -107,3 +125,16 @@ curl -sS -X POST "$AUTOML_API_URL/v1/runs" \
 ```
 
 逐路由 curl 示例见[API 路由使用手册](../docs/api-route-reference.md)。
+
+## 6. 启动 callback receiver
+
+先创建 Webhook endpoint，再把创建响应中仅返回一次的 `signing_secret` 注入接收端：
+
+```bash
+AUTOML_WEBHOOK_SIGNING_SECRET='<one-time-secret>' \
+uv run uvicorn webhook_receiver:app \
+  --app-dir examples/python --host 0.0.0.0 --port 9000
+```
+
+示例用内存 set 去重，只适合单进程联调。生产接收端必须在返回 2xx 前，将 event 和
+`delivery_id` 唯一约束原子写入持久存储。

@@ -6,6 +6,10 @@ import stat
 import subprocess
 
 from automl_api.operations import CANONICAL_OPERATION_IDS
+from scripts.verify_oidc_deployment import (
+    REQUIRED_DATA_LIFECYCLE_OPERATION_SCOPES,
+    REQUIRED_WEBHOOK_OPERATION_SCOPES,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,6 +50,8 @@ def test_keycloak_realm_bootstraps_one_machine_client_with_strict_claims() -> No
     assert operation_scopes <= {
         f"automl:operation:{operation_id}" for operation_id in CANONICAL_OPERATION_IDS
     }
+    assert REQUIRED_WEBHOOK_OPERATION_SCOPES <= operation_scopes
+    assert REQUIRED_DATA_LIFECYCLE_OPERATION_SCOPES <= operation_scopes
     assert "automl:operation:decideApproval" not in operation_scopes
 
 

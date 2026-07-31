@@ -29,12 +29,12 @@ info:
 
     当前激活实现包含可重启恢复的单机 durable profile 和受控单节点生产 profile：支持真实
     CSV/Parquet 上传、SQLite checkpoint、受限的二分类/回归训练、结构化人工中断/继续、
-    可校验 artifact 下载、OIDC/JWKS token 验证、Webhook outbox、审批 workflow、
+    可校验 artifact 下载、OIDC/JWKS token 验证、Webhook outbox/HTTP 投递、审批 workflow、
     deletion job 和审批通过后的 ModelCandidate 注册。
 
     `single-node-production` 使用 JWT、HTTPS、SQLite WAL、本地不可变对象、串行 worker、
     资源边界、审计、指标和校验备份，适合一台受控主机、有限租户和可接受维护窗口的生产服务。
-    它不包含内置 Webhook HTTP dispatcher，事件通知使用 SSE/轮询或外部 outbox dispatcher。
+    单节点 profile 内置 durable Webhook HTTP dispatcher；SSE/轮询仍是 callback 故障时的恢复源。
     `cluster-production` 在 PostgreSQL/RLS、S3/KMS、独立 worker 和高可用 adapter 接入前保持
     `/readyz` fail closed，不得把单节点资格解释为集群或公网多租户生产资格。
 servers:
@@ -64,7 +64,7 @@ tags:
   - name: Models
     description: 通过门禁的 eligible candidate；当前本地 profile 不注册模型。
   - name: Webhooks
-    description: Durable endpoint/outbox 管理；内置 HTTP dispatcher 当前未实现，事件通知使用 SSE/轮询或外部 dispatcher。
+    description: Durable endpoint/outbox 管理、HMAC HTTP 投递、退避、熔断和人工重投。
   - name: Deletions
     description: 数据与派生资源删除 saga、状态和凭证。
 
@@ -654,6 +654,255 @@ paths:
         '410': {$ref: '#/components/responses/Gone'}
         '422': {$ref: '#/components/responses/UnprocessableEntity'}
 
+  /v1/webhook-endpoints:
+    post:
+      tags: [Webhooks]
+      operationId: createWebhookEndpoint
+      x-maturity: production-preview
+      summary: 注册签名 Webhook
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateWebhookEndpointRequest'}
+      responses:
+        '201':
+          description: Webhook 已创建；signing_secret 仅返回一次
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WebhookEndpointCreated'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/UnprocessableEntity'}
+    get:
+      tags: [Webhooks]
+      operationId: listWebhookEndpoints
+      x-maturity: production-preview
+      summary: 查询 Webhook
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Webhook 页
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, page]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/WebhookEndpoint'}
+                  page: {$ref: '#/components/schemas/PageMeta'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  '/v1/webhook-endpoints/{webhook_endpoint_id}':
+    get:
+      tags: [Webhooks]
+      operationId: getWebhookEndpoint
+      x-maturity: production-preview
+      summary: 获取 Webhook 配置
+      parameters:
+        - $ref: '#/components/parameters/WebhookEndpointId'
+      responses:
+        '200':
+          description: Webhook 配置；永不返回签名密钥
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WebhookEndpoint'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    delete:
+      tags: [Webhooks]
+      operationId: deleteWebhookEndpoint
+      x-maturity: production-preview
+      summary: 删除 Webhook
+      parameters:
+        - $ref: '#/components/parameters/WebhookEndpointId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204': {description: 已删除}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  '/v1/webhook-endpoints/{webhook_endpoint_id}:rotate-secret':
+    post:
+      tags: [Webhooks]
+      operationId: rotateWebhookEndpointSecret
+      x-maturity: production-preview
+      summary: 轮换 Webhook 签名密钥
+      description: |
+        返回一次新密钥。旧密钥继续有效 300 秒，允许消费者无中断切换；宽限期后立即失效。
+      parameters:
+        - $ref: '#/components/parameters/WebhookEndpointId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: 新密钥已生成并仅在本响应中返回
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WebhookSecretRotated'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+
+  '/v1/webhook-endpoints/{webhook_endpoint_id}:enable':
+    post:
+      tags: [Webhooks]
+      operationId: enableWebhookEndpoint
+      x-maturity: production-preview
+      summary: 修复接收端后恢复 Webhook 投递
+      description: |
+        将 PAUSED_DELIVERY_FAILURES endpoint 恢复为 ACTIVE，并对 PENDING delivery 重新启动
+        自动投递。EXHAUSTED delivery 不自动重放，必须逐条调用 redeliver。
+      parameters:
+        - $ref: '#/components/parameters/WebhookEndpointId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Webhook 已启用；已为 ACTIVE 时幂等返回同一资源
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WebhookEndpoint'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+
+  '/v1/webhook-endpoints/{webhook_endpoint_id}/deliveries':
+    get:
+      tags: [Webhooks]
+      operationId: listWebhookDeliveries
+      x-maturity: production-preview
+      summary: 查询 Webhook 投递状态
+      parameters:
+        - $ref: '#/components/parameters/WebhookEndpointId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: status
+          in: query
+          schema:
+            type: array
+            items: {$ref: '#/components/schemas/WebhookDeliveryStatus'}
+          style: form
+          explode: false
+      responses:
+        '200':
+          description: 投递记录页
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WebhookDeliveryPage'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  '/v1/webhook-endpoints/{webhook_endpoint_id}/deliveries/{delivery_id}':
+    get:
+      tags: [Webhooks]
+      operationId: getWebhookDelivery
+      x-maturity: production-preview
+      summary: 获取一个 Webhook 投递及最新 attempt 状态
+      parameters:
+        - $ref: '#/components/parameters/WebhookEndpointId'
+        - $ref: '#/components/parameters/WebhookDeliveryId'
+      responses:
+        '200':
+          description: 投递状态
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WebhookDelivery'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  '/v1/webhook-endpoints/{webhook_endpoint_id}/deliveries/{delivery_id}:redeliver':
+    post:
+      tags: [Webhooks]
+      operationId: redeliverWebhookDelivery
+      x-maturity: production-preview
+      summary: 请求重新投递一个 Webhook 事件
+      description: |
+        为同一 delivery_id 创建新 attempt。接收方继续按 delivery_id 去重；即使响应丢失，
+        已成功处理的事件也不会产生第二次业务副作用。endpoint 处于
+        PAUSED_DELIVERY_FAILURES 时先调用 :enable，否则返回 409。
+        EXHAUSTED delivery 只能在 redeliver_until 之前人工重投；达到该时间后
+        返回 410 webhook_redelivery_expired。
+      parameters:
+        - $ref: '#/components/parameters/WebhookEndpointId'
+        - $ref: '#/components/parameters/WebhookDeliveryId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: 重投请求已接受
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WebhookRedeliveryReceipt'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '410': {$ref: '#/components/responses/Gone'}
+
+
+webhooks:
+  runEvent:
+    post:
+      operationId: receiveRunEventWebhook
+      summary: Run 事件投递
+      x-runtime-delivery: builtin-durable-dispatcher
+      security: []
+      description: |
+        本 callback 由单节点 API 进程内的 durable outbox worker 投递。callback 故障不会改变
+        AutoML Run 的执行结果；接收方可使用 RunEvent JSON 分页或 SSE 恢复事实状态。
+
+        至少一次投递。X-AutoML-Timestamp 是 Unix 秒。X-AutoML-Signature 格式为
+        `v1=<lowercase hex>`。signing_secret 是 32 个随机字节的无填充 base64url 编码，
+        接收方先将其解码为 32 字节 key，再计算 HMAC-SHA256(key,
+        ASCII(timestamp) || 0x2e || raw_request_body_octets)。请求不得使用 Content-Encoding
+        （等价于 identity）。raw_request_body_octets 是移除 HTTP transfer framing 后、在任何
+        字符解码、JSON 解析、重序列化、换行或空白规范化前收到的精确 application-data 字节。
+        Content-Type 为 application/json; charset=utf-8，但签名验证不得先解码 body。
+        接收方必须在常量时间内校验签名，拒绝与本地时间相差超过 300 秒的请求，并按
+        delivery_id 去重。
+
+        任意 2xx 表示成功；连接/10 秒响应超时或非 2xx 表示失败。首次投递立即执行，
+        第 n 次重试（n>=2）前等待 full-jitter[0, min(5*2^(n-2), 21600)] 秒。
+        从 first_attempt_at 起达到 72 小时或累计 12 次 attempt（先到者）后标记 EXHAUSTED。
+        投递前解析并校验全部目的 IP，实际连接固定到已校验 IP，同时保留原始
+        Host、TLS SNI 和证书主机名校验，防止 DNS rebinding 在校验与连接之间换址。
+        endpoint 投递耗尽时熔断为 PAUSED_DELIVERY_FAILURES，新事件仅记录为
+        PENDING 而不发起网络请求；修复后调用管理 API :enable。EXHAUSTED 不会
+        阻塞同一 Run 后续的 PENDING 投递，未完成投递仍按创建顺序处理。
+      parameters:
+        - name: X-AutoML-Delivery-Id
+          in: header
+          required: true
+          schema: {type: string}
+        - name: X-AutoML-Timestamp
+          in: header
+          required: true
+          description: Unix 秒的十进制字符串，参与签名的值必须与该 header 原文完全一致。
+          schema: {type: string, pattern: '^[0-9]{10,}$'}
+        - name: X-AutoML-Signature
+          in: header
+          required: true
+          description: 对 timestamp、点号和未经解析的原始 body 字节计算的 HMAC-SHA256。
+          schema: {type: string, pattern: '^v1=[a-f0-9]{64}$'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/WebhookEnvelope'}
+      responses:
+        '2XX': {description: 已接受}
 
 components:
   securitySchemes:
@@ -1284,10 +1533,21 @@ components:
         autonomy: {$ref: '#/components/schemas/AutonomyPolicy'}
         policy: {$ref: '#/components/schemas/RunPolicy'}
         budget: {$ref: '#/components/schemas/RunBudget'}
+        callback_url:
+          type: [string, 'null']
+          format: uri
+          description: |
+            可选阶段回调 URL。必须与当前租户通过 POST /v1/webhook-endpoints 预注册且 ACTIVE
+            的 URL 完全一致；服务使用该 endpoint 的一次性 signing_secret 对回调签名。
+            只传此字段时必须唯一匹配一个 endpoint；重复 URL 会返回 409。
         webhook_endpoint_ids:
           type: array
           uniqueItems: true
           items: {type: string}
+          description: |
+            可选的当前租户 ACTIVE endpoint ID 集合。只传本字段时可绑定多个 endpoint；
+            与 callback_url 同时传入时必须恰好只选中该 URL 对应的 endpoint，否则返回 422。
+            两个字段都省略时本 Run 不产生 Webhook delivery。endpoint.event_types 仍会过滤事件。
 
     Objective:
       type: object
@@ -1410,6 +1670,11 @@ components:
             type: string
             enum: [PAUSE, RESUME, CANCEL, ANSWER, APPROVE, REQUEST_CHANGES, REJECT]
         budget_usage: {$ref: '#/components/schemas/BudgetUsage'}
+        callback_url: {type: [string, 'null'], format: uri}
+        webhook_endpoint_ids:
+          type: array
+          uniqueItems: true
+          items: {type: string}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
         links:
@@ -1517,6 +1782,7 @@ components:
     RunEvent:
       oneOf:
         - $ref: '#/components/schemas/PhaseChangedEvent'
+        - $ref: '#/components/schemas/StageCompletedEvent'
         - $ref: '#/components/schemas/ProgressUpdatedEvent'
         - $ref: '#/components/schemas/OutputCommittedEvent'
         - $ref: '#/components/schemas/DecisionPacketRequestedEvent'
@@ -1530,6 +1796,7 @@ components:
         propertyName: type
         mapping:
           run.phase_changed.v1: '#/components/schemas/PhaseChangedEvent'
+          run.stage_completed.v1: '#/components/schemas/StageCompletedEvent'
           run.progress_updated.v1: '#/components/schemas/ProgressUpdatedEvent'
           output.committed.v1: '#/components/schemas/OutputCommittedEvent'
           decision_packet.requested.v1: '#/components/schemas/DecisionPacketRequestedEvent'
@@ -1571,6 +1838,29 @@ components:
                     - type: 'null'
                 phase: {$ref: '#/components/schemas/RunPhase'}
                 status: {$ref: '#/components/schemas/RunStatus'}
+
+    StageCompletedEvent:
+      allOf:
+        - $ref: '#/components/schemas/BaseRunEvent'
+        - type: object
+          required: [type, payload]
+          properties:
+            type: {type: string, const: run.stage_completed.v1}
+            payload:
+              type: object
+              required: [phase, status, completed_at, progress_percent, output_refs, next_phase]
+              properties:
+                phase: {$ref: '#/components/schemas/RunPhase'}
+                status: {type: string, const: COMPLETED}
+                completed_at: {type: string, format: date-time}
+                progress_percent: {type: number, minimum: 0, maximum: 100}
+                output_refs:
+                  type: array
+                  items: {$ref: '#/components/schemas/OutputRef'}
+                next_phase:
+                  oneOf:
+                    - $ref: '#/components/schemas/RunPhase'
+                    - type: 'null'
 
     ProgressUpdatedEvent:
       allOf:
@@ -2085,6 +2375,37 @@ components:
         limitations:
           type: array
           items: {type: string}
+        visualization_status:
+          type: string
+          enum: [COMPLETE, PARTIAL, UNAVAILABLE]
+          default: UNAVAILABLE
+        visualizations:
+          type: array
+          items: {$ref: '#/components/schemas/EvaluationVisualization'}
+
+    EvaluationVisualization:
+      type: object
+      required:
+        - chart_type
+        - status
+        - source_partition
+        - sample_count
+        - aggregate_only
+        - contains_raw_rows
+      properties:
+        chart_type:
+          type: string
+          enum: [METRIC_COMPARISON, CONFUSION_MATRIX, ROC_CURVE, PRECISION_RECALL_CURVE, CALIBRATION_CURVE, OBSERVED_VS_PREDICTED, RESIDUALS_VS_PREDICTED, RESIDUAL_DISTRIBUTION]
+        status: {type: string, enum: [GENERATED, SKIPPED, FAILED]}
+        artifact_id: {type: [string, 'null']}
+        media_type: {type: [string, 'null'], enum: [image/png, null]}
+        source_partition: {type: string, const: SEALED_HOLDOUT}
+        sample_count: {type: integer, minimum: 0}
+        aggregate_only: {type: boolean, const: true}
+        contains_raw_rows: {type: boolean, const: false}
+        size_bytes: {type: [integer, 'null'], minimum: 0}
+        sha256: {type: [string, 'null'], pattern: '^[a-f0-9]{64}$'}
+        failure_code: {type: [string, 'null']}
 
     LogSummaryPayload:
       type: object
@@ -2391,6 +2712,9 @@ components:
         output_refs:
           type: array
           items: {$ref: '#/components/schemas/OutputRef'}
+        visualization_refs:
+          type: array
+          items: {$ref: '#/components/schemas/ArtifactRef'}
         completed_at: {type: string, format: date-time}
 
     EligibleModelRunResult:
@@ -2538,12 +2862,19 @@ components:
       additionalProperties: false
       required: [url, event_types]
       properties:
-        url: {type: string, format: uri}
+        url:
+          type: string
+          format: uri
+          description: |
+            默认必须是 HTTPS 公网 URL。私网地址只能由运维通过精确 CIDR 显式放行。
+            dispatcher 不跟随重定向、不使用环境代理，投递前验证所有 DNS 结果并固定连接到已验证 IP。
         event_types:
           type: array
           minItems: 1
           uniqueItems: true
-          items: {type: string}
+          items:
+            type: string
+            enum: ['*', run.phase_changed.v1, run.stage_completed.v1, run.progress_updated.v1, output.committed.v1, decision_packet.requested.v1, approval.requested.v1, experiment.metrics_updated.v1, run.completed.v1, run.failed.v1, run.canceled.v1, run.expired.v1]
         description: {type: string, maxLength: 500}
 
     WebhookEndpoint:
@@ -2635,7 +2966,7 @@ components:
         redeliver_until:
           type: [string, 'null']
           format: date-time
-          description: EXHAUSTED 时为 exhausted_at 后 30 天；此前可调用 redeliver，其他状态为 null。
+          description: EXHAUSTED 时由独立人工重投保留策略计算，默认为 exhausted_at 后 30 天；此前可调用 redeliver，其他状态为 null。
 
     WebhookDeliveryPage:
       type: object

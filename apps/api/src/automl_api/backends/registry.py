@@ -6,7 +6,7 @@ from importlib import import_module
 from threading import RLock
 from typing import Any
 
-from ..ml_engine import Source, TabularAutoMLResult, TaskType
+from ..ml_engine import ExecutionStageCallback, Source, TabularAutoMLResult, TaskType
 from .base import (
     BackendDescriptor,
     BackendMediaTypeUnsupportedError,
@@ -142,12 +142,16 @@ class BackendRegistry:
         max_categories: int = 128,
         max_trials: int | None = None,
         max_wall_time_seconds: int | None = None,
+        stage_callback: ExecutionStageCallback | None = None,
     ) -> TabularAutoMLResult:
         backend = self.validate_request(
             backend_id,
             task_type=task_type,
             media_type=media_type,
         )
+        execution_options: dict[str, Any] = {}
+        if stage_callback is not None:
+            execution_options["stage_callback"] = stage_callback
         return backend.run(
             source,
             target_column=target_column,
@@ -162,6 +166,7 @@ class BackendRegistry:
             max_categories=max_categories,
             max_trials=max_trials,
             max_wall_time_seconds=max_wall_time_seconds,
+            **execution_options,
         )
 
 

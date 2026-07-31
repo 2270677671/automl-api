@@ -9,7 +9,13 @@ import jwt
 from jwt.algorithms import RSAAlgorithm
 import pytest
 
-from scripts.verify_oidc_deployment import Settings, VerificationError, verify
+from scripts.verify_oidc_deployment import (
+    REQUIRED_DATA_LIFECYCLE_OPERATION_SCOPES,
+    REQUIRED_WEBHOOK_OPERATION_SCOPES,
+    Settings,
+    VerificationError,
+    verify,
+)
 
 
 ISSUER = "https://identity.example.test/realms/automl"
@@ -17,13 +23,23 @@ API_URL = "https://api.example.test"
 AUDIENCE = "managed-automl-api"
 
 
-def _identity_transport(*, include_approval_scope: bool = False) -> httpx.MockTransport:
+def _identity_transport(
+    *,
+    include_approval_scope: bool = False,
+    omitted_scope: str | None = None,
+) -> httpx.MockTransport:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     public_jwk = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
     public_jwk.update({"kid": "signing-key", "alg": "RS256", "use": "sig"})
-    scopes = ["automl:operation:getAgentInterfaceManifest"]
+    scopes = [
+        "automl:operation:getAgentInterfaceManifest",
+        *sorted(REQUIRED_WEBHOOK_OPERATION_SCOPES),
+        *sorted(REQUIRED_DATA_LIFECYCLE_OPERATION_SCOPES),
+    ]
     if include_approval_scope:
         scopes.append("automl:operation:decideApproval")
+    if omitted_scope is not None:
+        scopes.remove(omitted_scope)
     now = int(time.time())
     token = jwt.encode(
         {
@@ -106,7 +122,9 @@ def test_oidc_verification_script_checks_credentials_jwks_and_api(
         "expires_in": 300,
         "tenant_id": "tenant_partner",
         "actor_type": "agent",
-        "operation_scope_count": 1,
+        "operation_scope_count": 12,
+        "webhook_operation_scope_count": 9,
+        "data_lifecycle_operation_scope_count": 2,
         "decide_approval_granted": False,
         "invalid_secret_status": 401,
         "invalid_secret_error": "unauthorized_client",
@@ -128,4 +146,34 @@ def test_oidc_verification_script_rejects_machine_approval_scope(
     )
 
     with pytest.raises(VerificationError, match="must not receive decideApproval"):
+        verify(_settings())
+
+
+def test_oidc_verification_script_rejects_missing_webhook_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client_type = httpx.Client
+    missing = "automl:operation:createWebhookEndpoint"
+    transport = _identity_transport(omitted_scope=missing)
+    monkeypatch.setattr(
+        "scripts.verify_oidc_deployment.httpx.Client",
+        lambda **_kwargs: client_type(transport=transport),
+    )
+
+    with pytest.raises(VerificationError, match=missing):
+        verify(_settings())
+
+
+def test_oidc_verification_script_rejects_missing_data_lifecycle_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client_type = httpx.Client
+    missing = "automl:operation:deleteDataset"
+    transport = _identity_transport(omitted_scope=missing)
+    monkeypatch.setattr(
+        "scripts.verify_oidc_deployment.httpx.Client",
+        lambda **_kwargs: client_type(transport=transport),
+    )
+
+    with pytest.raises(VerificationError, match=missing):
         verify(_settings())

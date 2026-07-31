@@ -135,14 +135,18 @@ def test_agent_tools_contract_is_a_fresh_canonical_filter() -> None:
 
     assert active == render_agent_contract(canonical)
     assert _components(active) == _components(canonical)
-    assert [item.operation_id for item in parse_operations(active)] == list(ACTIVE_OPERATION_IDS)
+    operations = [item for item in parse_operations(active) if item.path != "runEvent"]
+    assert [item.operation_id for item in operations] == list(ACTIVE_OPERATION_IDS)
+    assert "\nwebhooks:\n  runEvent:\n" in active
+    assert "X-AutoML-Signature" in active
+    assert "DNS rebinding" in active
     assert "x-maturity: not-implemented" not in active
     assert "'501':" not in active
 
 
 def test_agent_tools_operations_exist_in_the_runtime_routes(client) -> None:
     active = AGENT_TOOLS_PATH.read_text(encoding="utf-8")
-    operations = parse_operations(active)
+    operations = [item for item in parse_operations(active) if item.path != "runEvent"]
     assert len(operations) == len(ACTIVE_OPERATION_IDS)
     assert len({item.operation_id for item in operations}) == len(operations)
 

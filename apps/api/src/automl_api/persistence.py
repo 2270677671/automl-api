@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime
@@ -369,6 +370,24 @@ class SqliteStore(InMemoryStore):
             bump_revision=bump_revision,
         )
 
+    async def finalize_run_with_result(
+        self,
+        run_id: str,
+        *,
+        result: Mapping[str, Any],
+        run_updates: Mapping[str, Any],
+        events: Iterable[Mapping[str, Any]],
+        expected_revision: int | None = None,
+    ) -> tuple[JsonDict, JsonDict, list[JsonDict]]:
+        return await self._durable_mutation(
+            super().finalize_run_with_result,
+            run_id,
+            result=result,
+            run_updates=run_updates,
+            events=events,
+            expected_revision=expected_revision,
+        )
+
     async def create_output(self, run_id: str, value: Mapping[str, Any]) -> JsonDict:
         return await self._durable_mutation(super().create_output, run_id, value)
 
@@ -680,6 +699,34 @@ class SqliteStore(InMemoryStore):
                 current_status=str(row["status"]),
             )
         return row
+
+    async def renew_execution_job(
+        self,
+        run_id: str,
+        *,
+        lease_generation: int,
+        control_epoch: int,
+        lease_seconds: float,
+    ) -> JsonDict:
+        if not math.isfinite(lease_seconds) or lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        with self._durability_lock:
+            with self._transaction() as cursor:
+                self._require_job_fence(cursor, run_id, lease_generation, control_epoch)
+                cursor.execute(
+                    """
+                    UPDATE execution_job
+                    SET lease_expires_at = julianday('now') + (? / 86400.0),
+                        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                    WHERE run_id = ?
+                    """,
+                    (lease_seconds, run_id),
+                )
+                updated = cursor.execute(
+                    "SELECT * FROM execution_job WHERE run_id = ?", (run_id,)
+                ).fetchone()
+            assert updated is not None
+            return self._job_from_row(updated)
 
     async def checkpoint_execution_job(
         self,

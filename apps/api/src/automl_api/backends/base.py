@@ -5,7 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
-from ..ml_engine import MLEngineError, Source, TabularAutoMLResult, TaskType
+from ..ml_engine import (
+    ExecutionStageCallback,
+    MLEngineError,
+    Source,
+    TabularAutoMLResult,
+    TaskType,
+)
 
 
 class BackendError(MLEngineError):
@@ -148,6 +154,7 @@ class TabularBackend(Protocol):
         max_categories: int = 128,
         max_trials: int | None = None,
         max_wall_time_seconds: int | None = None,
+        stage_callback: ExecutionStageCallback | None = None,
     ) -> TabularAutoMLResult: ...
 
 
