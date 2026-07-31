@@ -87,6 +87,10 @@ For an interrupted Run, use `wait_for_question()` and `answer_and_wait()`.
 For process output use `get_run_events()`/`stream_run_events()` and
 `iter_outputs()`. Artifact downloads should use `download_artifact_file()` so
 ticket refresh, Range resume, ETag, size, and SHA-256 checks remain consistent.
+Stage callback payloads and HMAC verification are documented in
+[`docs/stage-callback-contract.md`](../../docs/stage-callback-contract.md).
+After registering an endpoint with `create_webhook_endpoint()`, pass its exact URL as
+`callback_uri` and its ID through `webhook_endpoint_ids` to `create_run()`.
 
 The external Agent platform must keep the Bearer token outside the LLM prompt.
 Use `get_agent_context()` and `list_agent_actions()` to obtain the bounded tool

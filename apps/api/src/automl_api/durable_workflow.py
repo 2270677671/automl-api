@@ -78,7 +78,7 @@ class DurableWorkflowService(WorkflowService):
                 request,
                 media_type=version.get("media_type"),
             )
-            callback_url, webhook_endpoint_ids = await self._resolve_run_webhooks(
+            callback_uri, webhook_endpoint_ids = await self._resolve_run_webhooks(
                 principal, request
             )
             run_id = self.store.new_id("run")
@@ -128,7 +128,8 @@ class DurableWorkflowService(WorkflowService):
                     "policy": request["policy"],
                     "budget": budget,
                     "execution_step": "PROFILE",
-                    "callback_url": callback_url,
+                    "callback_uri": callback_uri,
+                    "callback_url": callback_uri,
                     "webhook_endpoint_ids": webhook_endpoint_ids,
                 }
             )
@@ -345,18 +346,20 @@ class DurableWorkflowService(WorkflowService):
                     "issues": [],
                 },
             )
-            current = await self._complete_stage(
-                current,
-                "PROFILE",
-                next_phase="PLAN",
-                output_refs=[self._output_ref(quality_output)],
-            )
             current = await self.store.update_run(
                 current["run_id"],
                 {"pre_split_profile": profile, "execution_step": "RESOLVE_TASK"},
                 bump_revision=False,
             )
             questions = self._initial_questions(current, profile)
+            current = await self._complete_stage(
+                current,
+                "PROFILE",
+                next_phase="PLAN",
+                output_refs=[self._output_ref(quality_output)],
+                next_stage_ready=not questions,
+                reason="USER_INPUT_REQUIRED" if questions else None,
+            )
             if questions:
                 await self._request_decision(current, questions, [quality_output["output_id"]])
                 return CHECKPOINT(
@@ -1303,6 +1306,8 @@ class DurableWorkflowService(WorkflowService):
                         "progress_percent": 100.0,
                         "output_refs": [self._output_ref(output) for output in package_outputs],
                         "next_phase": None,
+                        "next_stage_ready": False,
+                        "reason": "WORKFLOW_COMPLETED",
                     },
                     "links": {"run": f"/v1/runs/{run_id}"},
                 },
@@ -1474,6 +1479,7 @@ class DurableWorkflowService(WorkflowService):
                         "failure_code": code,
                         "retriable": retriable,
                         "result_href": f"/v1/runs/{run['run_id']}/result",
+                        "phase": run["phase"],
                     },
                     "links": {"run": f"/v1/runs/{run['run_id']}"},
                 }

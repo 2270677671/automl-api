@@ -83,13 +83,15 @@ session、按服务返回 URL 和 headers 上传、保存 ETag、计算本地 SH
 
 Callback 必须先通过 `POST /v1/webhook-endpoints` 注册。创建响应中的 `signing_secret`
 只返回一次，由 Agent 平台的 secret manager 保管，不得进入 LLM Prompt。然后在创建 Run 时
-传入 `callback_url`、`webhook_endpoint_ids` 之一或两者。URL 必须完全匹配同租户 ACTIVE
+传入 `callback_uri`、`webhook_endpoint_ids` 之一或两者。URI 必须完全匹配同租户 ACTIVE
 endpoint；两者都省略则本 Run 不产生 delivery。
 
 服务在 `INGEST -> PROFILE -> PLAN -> TRAIN -> EVALUATE -> PACKAGE` 每个真实持久化边界后投递
 `run.stage_completed.v1`。接收端必须在解析 JSON 前使用 raw body 验证 HMAC，检查 300 秒
 时间窗，并按 delivery ID 持久化去重。可运行接收端见
 [`examples/python/webhook_receiver.py`](../examples/python/webhook_receiver.py)。
+每个阶段通知还包含 `callback.states`、`callback.next_stage`、`callback.next_stage_name` 和
+`callback.reason`，详见[阶段 Callback 契约](stage-callback-contract.md)。`callback_url` 是弃用别名。
 
 ## 7. 观察过程
 

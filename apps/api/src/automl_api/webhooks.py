@@ -20,12 +20,84 @@ from urllib.parse import urlsplit
 import anyio
 import httpx
 
+from .models import StageCallbackPayload
 from .protocol import iso_now, utcnow
 from .store import InMemoryStore
 
 
 LOGGER = logging.getLogger(__name__)
 _UNFINISHED = {"PENDING", "DELIVERING", "RETRYING"}
+_CALLBACK_STAGE_NAMES = {
+    "INGEST": "data_read",
+    "PROFILE": "data_analysis",
+    "PLAN": "task_recognition",
+    "TRAIN": "model_training",
+    "EVALUATE": "model_evaluation",
+    "PACKAGE": "result_package",
+}
+
+
+def _callback_reason(value: Any) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    return normalized or None
+
+
+def stage_callback_for_event(
+    event: dict[str, Any],
+    *,
+    fallback_phase: str | None = None,
+) -> dict[str, Any] | None:
+    """Project terminal stage events into the compact Agent callback contract."""
+
+    event_type = str(event.get("type") or "")
+    payload = event.get("payload")
+    if not isinstance(payload, dict):
+        return None
+
+    phase = str(payload.get("phase") or fallback_phase or "")
+    stage = _CALLBACK_STAGE_NAMES.get(phase)
+    if stage is None:
+        return None
+
+    next_phase: str | None = None
+    if event_type == "run.stage_completed.v1":
+        raw_next_phase = payload.get("next_phase")
+        next_phase = str(raw_next_phase) if raw_next_phase is not None else None
+        readiness = payload.get("next_stage_ready")
+        next_stage = next_phase is not None if readiness is None else bool(readiness)
+        states = "success"
+        reason = _callback_reason(payload.get("reason"))
+        if not next_stage and reason is None:
+            reason = "workflow_completed" if next_phase is None else "next_stage_blocked"
+    elif event_type == "run.failed.v1":
+        next_stage = False
+        states = "failed"
+        reason = _callback_reason(payload.get("failure_code")) or "stage_failed"
+    elif event_type == "run.canceled.v1":
+        next_stage = False
+        states = "canceled"
+        reason = "user_canceled"
+    else:
+        return None
+
+    callback = StageCallbackPayload.model_validate(
+        {
+            "schema_version": "1.0",
+            "toolname": "automl",
+            "run_id": event["run_id"],
+            "event_id": event["event_id"],
+            "seq": event["seq"],
+            "occurred_at": event["occurred_at"],
+            "stage": stage,
+            "states": states,
+            "next_stage": next_stage,
+            "next_stage_name": _CALLBACK_STAGE_NAMES.get(next_phase or ""),
+            "reason": reason,
+        }
+    )
+    return callback.model_dump(mode="json")
 
 
 class _WebhookHTTPError(RuntimeError):
@@ -268,13 +340,21 @@ class WebhookDeliveryWorker:
         )
         try:
             event = await self._event_for_delivery(delivery)
+            run = await self.store.get_run(str(delivery["run_id"]))
+            callback = stage_callback_for_event(
+                event,
+                fallback_phase=str(run.get("phase")) if run is not None else None,
+            )
+            envelope: dict[str, Any] = {
+                "delivery_id": delivery_id,
+                "webhook_endpoint_id": endpoint_id,
+                "attempt": attempt,
+                "event": event,
+            }
+            if callback is not None:
+                envelope["callback"] = callback
             body = json.dumps(
-                {
-                    "delivery_id": delivery_id,
-                    "webhook_endpoint_id": endpoint_id,
-                    "attempt": attempt,
-                    "event": event,
-                },
+                envelope,
                 ensure_ascii=True,
                 allow_nan=False,
                 sort_keys=True,
@@ -411,5 +491,6 @@ class WebhookDeliveryWorker:
 __all__ = [
     "WebhookDeliverySettings",
     "WebhookDeliveryWorker",
+    "stage_callback_for_event",
     "validate_webhook_registration_url",
 ]

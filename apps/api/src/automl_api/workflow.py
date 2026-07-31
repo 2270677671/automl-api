@@ -42,13 +42,19 @@ RUN_PUBLIC_FIELDS = {
     "created_at",
     "updated_at",
     "links",
+    "callback_uri",
     "callback_url",
     "webhook_endpoint_ids",
 }
 
 
 def _public_run(run: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in run.items() if key in RUN_PUBLIC_FIELDS}
+    public = {key: value for key, value in run.items() if key in RUN_PUBLIC_FIELDS}
+    callback_uri = run.get("callback_uri", run.get("callback_url"))
+    if callback_uri is not None or "callback_uri" in run or "callback_url" in run:
+        public["callback_uri"] = callback_uri
+        public["callback_url"] = callback_uri
+    return public
 
 
 def _page(items: list[dict[str, Any]], high_watermark: int | None = None) -> dict[str, Any]:
@@ -157,8 +163,21 @@ class WorkflowService:
         principal: Principal,
         request: dict[str, Any],
     ) -> tuple[str | None, list[str]]:
+        callback_uri = request.get("callback_uri")
         callback_url = request.get("callback_url")
-        normalized_url = str(callback_url) if callback_url is not None else None
+        if (
+            callback_uri is not None
+            and callback_url is not None
+            and str(callback_uri) != str(callback_url)
+        ):
+            raise APIProblem(
+                422,
+                "callback_endpoint_mismatch",
+                "Callback endpoint does not match",
+                "callback_uri and callback_url must identify the same endpoint.",
+            )
+        selected_callback = callback_uri if callback_uri is not None else callback_url
+        normalized_url = str(selected_callback) if selected_callback is not None else None
         requested_ids = {str(item) for item in request.get("webhook_endpoint_ids") or []}
         endpoints = await self.store.list_webhook_endpoints(principal.tenant_id)
         by_id = {str(item["webhook_endpoint_id"]): item for item in endpoints}
@@ -207,13 +226,32 @@ class WorkflowService:
                     "Callback endpoint is ambiguous",
                     "Disable duplicate endpoints so the callback URL identifies exactly one.",
                 )
+            if callback_uri is not None:
+                subscribed_types = set(matches[0].get("event_types") or [])
+                required_types = {
+                    "run.stage_completed.v1",
+                    "run.failed.v1",
+                    "run.canceled.v1",
+                }
+                missing_types = sorted(required_types - subscribed_types)
+                if "*" not in subscribed_types and missing_types:
+                    raise APIProblem(
+                        422,
+                        "callback_event_types_incomplete",
+                        "Callback event subscription is incomplete",
+                        (
+                            "callback_uri requires '*', or stage-completed, failed, and "
+                            "canceled Run event subscriptions."
+                        ),
+                        extras={"missing_event_types": missing_types},
+                    )
             callback_endpoint_id = str(matches[0]["webhook_endpoint_id"])
             if requested_ids and requested_ids != {callback_endpoint_id}:
                 raise APIProblem(
                     422,
                     "callback_endpoint_mismatch",
                     "Callback endpoint does not match",
-                    "callback_url and webhook_endpoint_ids must select the same endpoint.",
+                    "callback_uri and webhook_endpoint_ids must select the same endpoint.",
                 )
             requested_ids = {callback_endpoint_id}
         return normalized_url, sorted(requested_ids)
@@ -467,7 +505,7 @@ class WorkflowService:
                 request,
                 media_type=version.get("media_type"),
             )
-            callback_url, webhook_endpoint_ids = await self._resolve_run_webhooks(
+            callback_uri, webhook_endpoint_ids = await self._resolve_run_webhooks(
                 principal, request
             )
 
@@ -511,7 +549,8 @@ class WorkflowService:
                     "objective": request["objective"],
                     "backend_id": backend["backend_id"],
                     "policy": request["policy"],
-                    "callback_url": callback_url,
+                    "callback_uri": callback_uri,
+                    "callback_url": callback_uri,
                     "webhook_endpoint_ids": webhook_endpoint_ids,
                 }
             )
@@ -529,6 +568,7 @@ class WorkflowService:
                 },
                 bump_revision=False,
             )
+            run = await self._complete_stage(run, "INGEST", next_phase="PROFILE")
             run = await self._emit(
                 run,
                 "run.phase_changed.v1",
@@ -550,6 +590,14 @@ class WorkflowService:
                     "quality_score": 100,
                     "issues": [],
                 },
+            )
+            run = await self._complete_stage(
+                run,
+                "PROFILE",
+                next_phase="PLAN",
+                output_refs=[self._output_ref(quality_output)],
+                next_stage_ready=False,
+                reason="USER_INPUT_REQUIRED",
             )
 
             decision_packet_id = self.store.new_id("decision_packet")
@@ -656,6 +704,8 @@ class WorkflowService:
         *,
         next_phase: str | None,
         output_refs: list[dict[str, Any]] | None = None,
+        next_stage_ready: bool | None = None,
+        reason: str | None = None,
     ) -> dict[str, Any]:
         existing = await self.store.get_events(run["run_id"], types=["run.stage_completed.v1"])
         if any(event.get("payload", {}).get("phase") == phase for event in existing):
@@ -679,6 +729,10 @@ class WorkflowService:
                 "progress_percent": progress_by_phase[phase],
                 "output_refs": output_refs or [],
                 "next_phase": next_phase,
+                "next_stage_ready": (
+                    next_phase is not None if next_stage_ready is None else next_stage_ready
+                ),
+                "reason": reason,
             },
         )
 
@@ -1359,13 +1413,77 @@ class WorkflowService:
                     {
                         "schema_version": "1.0",
                         "occurred_at": completed_at,
+                        "type": "run.stage_completed.v1",
+                        "payload": {
+                            "phase": "PLAN",
+                            "status": "COMPLETED",
+                            "completed_at": completed_at,
+                            "progress_percent": 45.0,
+                            "output_refs": [self._output_ref(task_output)],
+                            "next_phase": "TRAIN",
+                            "next_stage_ready": True,
+                            "reason": None,
+                        },
+                        "links": {"run": f"/v1/runs/{run_id}"},
+                    },
+                    {
+                        "schema_version": "1.0",
+                        "occurred_at": completed_at,
+                        "type": "run.stage_completed.v1",
+                        "payload": {
+                            "phase": "TRAIN",
+                            "status": "COMPLETED",
+                            "completed_at": completed_at,
+                            "progress_percent": 75.0,
+                            "output_refs": [],
+                            "next_phase": "EVALUATE",
+                            "next_stage_ready": True,
+                            "reason": None,
+                        },
+                        "links": {"run": f"/v1/runs/{run_id}"},
+                    },
+                    {
+                        "schema_version": "1.0",
+                        "occurred_at": completed_at,
+                        "type": "run.stage_completed.v1",
+                        "payload": {
+                            "phase": "EVALUATE",
+                            "status": "COMPLETED",
+                            "completed_at": completed_at,
+                            "progress_percent": 90.0,
+                            "output_refs": [],
+                            "next_phase": "PACKAGE",
+                            "next_stage_ready": True,
+                            "reason": None,
+                        },
+                        "links": {"run": f"/v1/runs/{run_id}"},
+                    },
+                    {
+                        "schema_version": "1.0",
+                        "occurred_at": completed_at,
+                        "type": "run.stage_completed.v1",
+                        "payload": {
+                            "phase": "PACKAGE",
+                            "status": "COMPLETED",
+                            "completed_at": completed_at,
+                            "progress_percent": 100.0,
+                            "output_refs": [self._output_ref(report_output)],
+                            "next_phase": None,
+                            "next_stage_ready": False,
+                            "reason": "WORKFLOW_COMPLETED",
+                        },
+                        "links": {"run": f"/v1/runs/{run_id}"},
+                    },
+                    {
+                        "schema_version": "1.0",
+                        "occurred_at": completed_at,
                         "type": "run.completed.v1",
                         "payload": {
                             "outcome": "SUCCEEDED",
                             "result_href": f"/v1/runs/{run_id}/result",
                         },
                         "links": {"run": f"/v1/runs/{run_id}"},
-                    }
+                    },
                 ],
                 expected_revision=run["run_revision"],
             )
@@ -1505,6 +1623,7 @@ class WorkflowService:
                             "payload": {
                                 "outcome": "CANCELED",
                                 "result_href": f"/v1/runs/{run_id}/result",
+                                "phase": run["phase"],
                             },
                             "links": {"run": f"/v1/runs/{run_id}"},
                         }

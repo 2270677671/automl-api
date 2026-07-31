@@ -42,7 +42,12 @@ def _parser() -> argparse.ArgumentParser:
         "--primary-metric",
         help="defaults to roc_auc for classification and rmse for regression",
     )
-    parser.add_argument("--callback-url", help="optional HTTPS stage callback URL")
+    parser.add_argument(
+        "--callback-uri",
+        "--callback-url",
+        dest="callback_uri",
+        help="optional registered HTTPS stage callback URI",
+    )
     parser.add_argument(
         "--webhook-endpoint-id",
         action="append",
@@ -204,8 +209,8 @@ def main() -> int:
                 "max_llm_tokens": 0,
             },
         }
-        if args.callback_url:
-            run_payload["callback_url"] = args.callback_url
+        if args.callback_uri:
+            run_payload["callback_uri"] = args.callback_uri
         if args.webhook_endpoint_id:
             run_payload["webhook_endpoint_ids"] = args.webhook_endpoint_id
 

@@ -261,7 +261,7 @@ curl --cacert "$AUTOML_CA_FILE" -fsS \
 
 ```json
 {
-  "callback_url": "https://agent.example.com/automl/callback",
+  "callback_uri": "https://agent.example.com/automl/callback",
   "webhook_endpoint_ids": ["wh_000000000001"]
 }
 ```
@@ -270,6 +270,8 @@ URL 必须完全匹配同租户 ACTIVE endpoint。每完成 `INGEST/PROFILE/PLAN
 之一，服务在该阶段真实 durable barrier 之后投递 `run.stage_completed.v1`；失败自动重试，
 接收方按 delivery ID 幂等。可运行的 raw-body HMAC 验签接收端见
 [`examples/python/webhook_receiver.py`](../examples/python/webhook_receiver.py)。
+签名信封的 `callback` 字段还会直接给出 `stage`、`states`、`next_stage` 和 `reason`；详见
+[阶段 Callback 契约](stage-callback-contract.md)。
 
 ### 6.5 查询 Run
 

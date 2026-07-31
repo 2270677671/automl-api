@@ -41,6 +41,8 @@ def test_sdk_completes_managed_workflow_in_a_small_call_surface(client: TestClie
         2,
         3,
         4,
+        5,
+        6,
     ]
     question = sdk.wait_for_question(run["run_id"], timeout=1, poll_interval=0)
     command = sdk.answer_and_wait(
@@ -53,7 +55,7 @@ def test_sdk_completes_managed_workflow_in_a_small_call_surface(client: TestClie
     assert command["status"] == "SUCCEEDED" and result["outcome"] == "SUCCEEDED"
     assert ticket["sha256"] == artifact["sha256"]
     assert [event["seq"] for event in sdk.stream_run_events(run["run_id"], after_seq=0)] == list(
-        range(1, 9)
+        range(1, 15)
     )
 
     def fail_on_reconnect(_delay: float) -> None:
@@ -136,7 +138,7 @@ def test_sdk_exposes_production_control_plane_helpers(client: TestClient) -> Non
     request = run_request(upload["dataset_version_id"])
     sdk.create_run(
         request,
-        callback_url=endpoint["url"],
+        callback_uri=endpoint["url"],
         webhook_endpoint_ids=[endpoint["webhook_endpoint_id"]],
         idempotency_key="sdk-webhook-run-0001",
     )

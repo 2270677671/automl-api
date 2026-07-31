@@ -20,6 +20,7 @@ the default local profile it can:
 | 查询全部 API 路由 | [API 路由使用手册](docs/api-route-reference.md) |
 | 运行 SDK/原始 HTTP 案例 | [examples/README.md](examples/README.md) |
 | 嵌入 Agent 平台 | [外部 Agent 接入契约](docs/external-agent-integration.md) |
+| 接收阶段状态与下一阶段准入结果 | [阶段 Callback 契约](docs/stage-callback-contract.md) |
 | 自动获取生产 access token | [OIDC/OAuth2 Client Credentials](docs/oidc-client-credentials.md) |
 | 文档总目录 | [docs/README.md](docs/README.md) |
 
@@ -54,7 +55,8 @@ operator's model-weight terms; see [framework backend notes](docs/framework-back
   loadable model because its native fit state contains development data;
 - download artifacts with expiring tickets, byte ranges, resume support, and integrity checks.
 - manage production-control resources for Webhook endpoints, signed HTTP delivery with durable
-  retry/redelivery, approval decisions, deletion jobs, and approved `ModelCandidate` records.
+  retry/redelivery, per-stage `callback_uri` status summaries, approval decisions, deletion jobs,
+  and approved `ModelCandidate` records.
 
 The service never calls an LLM. A separate Agent platform may discover this API, read a bounded
 Run context, and invoke the existing versioned operations. The platform owns model selection,

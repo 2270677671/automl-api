@@ -73,6 +73,7 @@ async def receive_callback(
 
     # Persist the event and delivery ID atomically before acknowledging in production.
     event = envelope.get("event") or {}
+    callback = envelope.get("callback") or {}
     print(
         json.dumps(
             {
@@ -80,6 +81,10 @@ async def receive_callback(
                 "event_id": event.get("event_id"),
                 "event_type": event.get("type"),
                 "run_id": event.get("run_id"),
+                "stage": callback.get("stage"),
+                "states": callback.get("states"),
+                "next_stage": callback.get("next_stage"),
+                "reason": callback.get("reason"),
             },
             ensure_ascii=True,
             sort_keys=True,

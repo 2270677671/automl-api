@@ -13,6 +13,7 @@ Prompt、DLP、凭据、人机交互和工具调用策略。
 | 获取一份带完整案例的独立手册 | [API 使用手册与示范案例](api-user-guide-with-examples.md) | [可运行案例](../examples/README.md) |
 | 查询每个 HTTP 路由 | [API 路由使用手册](api-route-reference.md) | [OpenAPI 3.1](../openapi/automl-api.yaml) |
 | 嵌入第三方 Agent 平台 | [外部 Agent 接入契约](external-agent-integration.md) | [Agent 工具 OpenAPI](../openapi/automl-agent-tools.yaml) |
+| 接收每个阶段的状态和准入结果 | [阶段 Callback 契约](stage-callback-contract.md) | [Webhook 接收端案例](../examples/python/webhook_receiver.py) |
 | 自动获取和刷新生产 token | [OIDC/OAuth2 Client Credentials](oidc-client-credentials.md) | [Python SDK](../packages/python_sdk/README.md) |
 | 运行代码案例 | [示例目录](../examples/README.md) | [Python SDK README](../packages/python_sdk/README.md) |
 | 选择 sklearn/AutoGluon/TabPFN | [后端说明](framework-backends.md) | [API 三后端案例](api-usage.md#9-三个标准后端案例) |

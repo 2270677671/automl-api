@@ -442,8 +442,28 @@ class CreateRunRequest(RequestModel):
     autonomy: AutonomyPolicy
     policy: RunPolicy
     budget: RunBudget
-    callback_url: AnyUrl | None = None
+    callback_uri: AnyUrl | None = Field(
+        default=None,
+        description=(
+            "Registered callback URI that receives signed Run events and stage summaries."
+        ),
+    )
+    callback_url: AnyUrl | None = Field(
+        default=None,
+        json_schema_extra={"deprecated": True},
+        description="Deprecated alias of callback_uri.",
+    )
     webhook_endpoint_ids: set[str] = Field(default_factory=set)
+
+    @model_validator(mode="after")
+    def validate_callback_aliases(self) -> CreateRunRequest:
+        if (
+            self.callback_uri is not None
+            and self.callback_url is not None
+            and str(self.callback_uri) != str(self.callback_url)
+        ):
+            raise ValueError("callback_uri and callback_url must identify the same endpoint")
+        return self
 
 
 class ContractVersions(PublicModel):
@@ -517,7 +537,8 @@ class RunSnapshot(PublicModel):
     created_at: datetime
     updated_at: datetime
     links: dict[str, str]
-    callback_url: AnyUrl | None = None
+    callback_uri: AnyUrl | None = None
+    callback_url: AnyUrl | None = Field(default=None, json_schema_extra={"deprecated": True})
     webhook_endpoint_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -911,6 +932,32 @@ class StageCompletedPayload(PublicModel):
     progress_percent: Percent
     output_refs: list[OutputRef]
     next_phase: RunPhase | None
+    next_stage_ready: bool | None = None
+    reason: str | None = None
+
+
+CallbackStage = Literal[
+    "data_read",
+    "data_analysis",
+    "task_recognition",
+    "model_training",
+    "model_evaluation",
+    "result_package",
+]
+
+
+class StageCallbackPayload(PublicModel):
+    schema_version: Literal["1.0"]
+    toolname: Literal["automl"]
+    run_id: str
+    event_id: str
+    seq: Annotated[int, Field(ge=1)]
+    occurred_at: datetime
+    stage: CallbackStage
+    states: Literal["success", "failed", "canceled"]
+    next_stage: bool
+    next_stage_name: CallbackStage | None = None
+    reason: str | None = None
 
 
 class ProgressUpdatedPayload(PublicModel):
@@ -949,11 +996,13 @@ class RunFailedPayload(PublicModel):
     failure_code: str
     retriable: bool
     result_href: str
+    phase: RunPhase | None = None
 
 
 class RunCanceledPayload(PublicModel):
     outcome: Literal["CANCELED"]
     result_href: str
+    phase: RunPhase | None = None
 
 
 class RunExpiredPayload(PublicModel):
@@ -1463,6 +1512,7 @@ __all__ = [
     "RunResult",
     "RunSnapshot",
     "SignUploadPartsRequest",
+    "StageCallbackPayload",
     "UploadPartsResponse",
     "WebhookDelivery",
     "WebhookDeliveryPage",

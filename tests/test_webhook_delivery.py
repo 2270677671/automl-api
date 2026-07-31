@@ -25,6 +25,7 @@ from automl_api.app import _stored_http_response
 from automl_api.protocol import iso_now
 from automl_api.store import InMemoryStore, StoredResponse
 from automl_api.webhooks import WebhookDeliverySettings, WebhookDeliveryWorker
+from automl_api.webhooks import stage_callback_for_event
 
 from .helpers import AUTH, create_ready_dataset, mutation_headers, run_request
 
@@ -80,6 +81,62 @@ def test_callback_url_must_match_the_selected_registered_endpoint(client) -> Non
         f"/v1/webhook-endpoints/{first['webhook_endpoint_id']}/deliveries", headers=AUTH
     ).json()["items"]
     assert deliveries == []
+
+
+def test_callback_uri_is_primary_and_legacy_alias_must_match(client) -> None:
+    endpoint = client.post(
+        "/v1/webhook-endpoints",
+        headers=mutation_headers("callback-uri-endpoint-0001"),
+        json={"url": "https://callback.example.test/stages", "event_types": ["*"]},
+    ).json()
+    other = client.post(
+        "/v1/webhook-endpoints",
+        headers=mutation_headers("callback-uri-endpoint-0002"),
+        json={"url": "https://other.example.test/stages", "event_types": ["*"]},
+    ).json()
+    dataset = create_ready_dataset(client, "callback-uri-0001")
+    request = run_request(dataset["dataset_version_id"])
+    request["callback_uri"] = endpoint["url"]
+    created = client.post(
+        "/v1/runs",
+        headers=mutation_headers("callback-uri-run-0001"),
+        json=request,
+    )
+    assert created.status_code == 202, created.text
+    assert created.json()["callback_uri"] == endpoint["url"]
+    assert created.json()["callback_url"] == endpoint["url"]
+
+    mismatched = run_request(dataset["dataset_version_id"])
+    mismatched["callback_uri"] = endpoint["url"]
+    mismatched["callback_url"] = other["url"]
+    rejected = client.post(
+        "/v1/runs",
+        headers=mutation_headers("callback-uri-run-0002"),
+        json=mismatched,
+    )
+    assert rejected.status_code == 422
+
+    incomplete = client.post(
+        "/v1/webhook-endpoints",
+        headers=mutation_headers("callback-uri-endpoint-0003"),
+        json={
+            "url": "https://incomplete.example.test/stages",
+            "event_types": ["run.stage_completed.v1"],
+        },
+    ).json()
+    missing_events = run_request(dataset["dataset_version_id"])
+    missing_events["callback_uri"] = incomplete["url"]
+    rejected = client.post(
+        "/v1/runs",
+        headers=mutation_headers("callback-uri-run-0003"),
+        json=missing_events,
+    )
+    assert rejected.status_code == 422
+    assert rejected.json()["code"] == "callback_event_types_incomplete"
+    assert rejected.json()["missing_event_types"] == [
+        "run.canceled.v1",
+        "run.failed.v1",
+    ]
 
 
 def test_webhook_registration_rejects_unknown_event_types(client) -> None:
@@ -155,7 +212,12 @@ def test_worker_sends_exact_signed_envelope_and_marks_success() -> None:
                 "schema_version": "1.0",
                 "occurred_at": iso_now(),
                 "type": "run.stage_completed.v1",
-                "payload": {"phase": "INGEST"},
+                "payload": {
+                    "phase": "INGEST",
+                    "next_phase": "PROFILE",
+                    "next_stage_ready": True,
+                    "reason": None,
+                },
                 "links": {"run": f"/v1/runs/{run['run_id']}"},
             },
         )
@@ -177,6 +239,19 @@ def test_worker_sends_exact_signed_envelope_and_marks_success() -> None:
             assert envelope["delivery_id"] == delivery["delivery_id"]
             assert envelope["attempt"] == 1
             assert envelope["event"]["payload"]["phase"] == "INGEST"
+            assert envelope["callback"] == {
+                "schema_version": "1.0",
+                "toolname": "automl",
+                "run_id": run["run_id"],
+                "event_id": envelope["event"]["event_id"],
+                "seq": envelope["event"]["seq"],
+                "occurred_at": envelope["event"]["occurred_at"],
+                "stage": "data_read",
+                "states": "success",
+                "next_stage": True,
+                "next_stage_name": "data_analysis",
+                "reason": None,
+            }
             return httpx.Response(204)
 
         worker = WebhookDeliveryWorker(
@@ -201,6 +276,50 @@ def test_worker_sends_exact_signed_envelope_and_marks_success() -> None:
         assert stored["last_response_status"] == 204
 
     asyncio.run(exercise())
+
+
+def test_stage_callback_reports_blocked_and_failed_transitions() -> None:
+    blocked = stage_callback_for_event(
+        {
+            "event_id": "evt_profile",
+            "run_id": "run_1",
+            "seq": 4,
+            "occurred_at": iso_now(),
+            "type": "run.stage_completed.v1",
+            "payload": {
+                "phase": "PROFILE",
+                "next_phase": "PLAN",
+                "next_stage_ready": False,
+                "reason": "USER_INPUT_REQUIRED",
+            },
+        }
+    )
+    assert blocked is not None
+    assert blocked["stage"] == "data_analysis"
+    assert blocked["states"] == "success"
+    assert blocked["next_stage"] is False
+    assert blocked["next_stage_name"] == "task_recognition"
+    assert blocked["reason"] == "user_input_required"
+
+    failed = stage_callback_for_event(
+        {
+            "event_id": "evt_failed",
+            "run_id": "run_1",
+            "seq": 5,
+            "occurred_at": iso_now(),
+            "type": "run.failed.v1",
+            "payload": {
+                "phase": "INGEST",
+                "failure_code": "DATA_ERROR",
+            },
+        }
+    )
+    assert failed is not None
+    assert failed["stage"] == "data_read"
+    assert failed["states"] == "failed"
+    assert failed["next_stage"] is False
+    assert failed["next_stage_name"] is None
+    assert failed["reason"] == "data_error"
 
 
 def test_exhausted_delivery_does_not_block_later_pending_delivery() -> None:

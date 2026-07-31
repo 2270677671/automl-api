@@ -2114,6 +2114,8 @@ def create_app(
                             "progress_percent": 100.0,
                             "output_refs": package_refs,
                             "next_phase": None,
+                            "next_stage_ready": False,
+                            "reason": "WORKFLOW_COMPLETED",
                         },
                         "links": {"run": f"/v1/runs/{run_id}"},
                     },

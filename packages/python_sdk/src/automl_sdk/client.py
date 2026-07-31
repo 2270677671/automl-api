@@ -396,12 +396,17 @@ class AutoMLClient:
         request: Mapping[str, Any] | None = None,
         *,
         idempotency_key: str | None = None,
+        callback_uri: str | None = None,
         callback_url: str | None = None,
         webhook_endpoint_ids: Sequence[str] | None = None,
         **fields: Any,
     ) -> JSONDict:
         body = _merge_payload(request, fields)
-        if callback_url is not None:
+        if callback_uri is not None and callback_url is not None and callback_uri != callback_url:
+            raise ValueError("callback_uri and callback_url must identify the same endpoint")
+        if callback_uri is not None:
+            body["callback_uri"] = callback_uri
+        elif callback_url is not None:
             body["callback_url"] = callback_url
         if webhook_endpoint_ids is not None:
             body["webhook_endpoint_ids"] = list(webhook_endpoint_ids)

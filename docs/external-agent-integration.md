@@ -60,7 +60,7 @@ Agent 平台执行动作时，必须调用 OpenAPI 中已有的 `answerDecisionP
 ## Callback 接入与恢复
 
 Agent 平台先使用 Agent tool OpenAPI 中的 `createWebhookEndpoint` 注册 HTTPS receiver，将一次性
-`signing_secret` 存入 secret manager，再在 `createRun` 中传入 `callback_url` 或
+`signing_secret` 存入 secret manager，再在 `createRun` 中传入 `callback_uri` 或
 `webhook_endpoint_ids`。该绑定是 Run 级的，不会向同租户其他 endpoint 广播。
 
 Callback receiver 必须：
@@ -72,6 +72,8 @@ Callback receiver 必须：
 5. 回查 RunSnapshot/Output/Result，不从通知展示文本推断权威状态。
 
 `run.stage_completed.v1` 阶段顺序为 `INGEST -> PROFILE -> PLAN -> TRAIN -> EVALUATE -> PACKAGE`。
+阶段事件的签名信封同时包含 `callback` 摘要，以 `next_stage` boolean 和 `reason` 明确下一阶段
+是否已经满足条件。完整字段和示例见[阶段 Callback 契约](stage-callback-contract.md)。
 单节点 dispatcher 对非 2xx/超时执行 full-jitter 重试，12 次或 72 小时后进入 `EXHAUSTED`，
 并保留 30 天人工重投窗口。callback 不可达不会使训练失败。完整验签代码见
 [`examples/python/webhook_receiver.py`](../examples/python/webhook_receiver.py)，完整接收合同也保留在 Agent tool OpenAPI 顶层

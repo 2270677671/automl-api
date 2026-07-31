@@ -190,6 +190,15 @@ def test_default_app_runs_and_recovers_real_durable_workflow(tmp_path: Path, mon
             "EVALUATE",
             "PACKAGE",
         ]
+        assert [item["payload"]["next_stage_ready"] for item in stage_events] == [
+            True,
+            False,
+            True,
+            True,
+            True,
+            False,
+        ]
+        assert stage_events[-1]["payload"]["reason"] == "WORKFLOW_COMPLETED"
         plan_event = next(item for item in stage_events if item["payload"]["phase"] == "PLAN")
         assert {ref["type"] for ref in plan_event["payload"]["output_refs"]} == {
             "TASK_SPEC",
@@ -287,6 +296,8 @@ def test_plan_completion_waits_for_positive_class_and_plan_outputs(
             params={"types": "run.stage_completed.v1", "limit": 100},
         ).json()["items"]
         assert [item["payload"]["phase"] for item in before_answer] == ["INGEST", "PROFILE"]
+        assert before_answer[-1]["payload"]["next_stage_ready"] is True
+        assert before_answer[-1]["payload"]["reason"] is None
 
         answered = client.post(
             f"/v1/runs/{run_id}/decision-packets/{packet['wait_set_id']}:answer",
@@ -476,4 +487,5 @@ def test_failed_run_event_remains_readable(tmp_path: Path, monkeypatch) -> None:
             "failure_code": "INVALID_TARGET",
             "retriable": False,
             "result_href": f"/v1/runs/{run_id}/result",
+            "phase": terminal["phase"],
         }

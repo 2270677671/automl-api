@@ -260,9 +260,12 @@ curl -sS -i "$AUTOML_API/v1/dataset-versions/dsv_000000000001" \
 
 Callback 字段：
 
-- `callback_url`：可选；必须与同租户 ACTIVE endpoint 的 URL 完全一致。只传 URL 时必须唯一匹配。
+- `callback_uri`：可选；必须与同租户 ACTIVE endpoint 的 URI 完全一致。只传 URI 时必须唯一匹配。
+- `callback_url`：弃用的兼容别名；与 `callback_uri` 同时出现时必须完全一致。
 - `webhook_endpoint_ids`：可选；只传 ID 时可绑定多个 endpoint。
-- 同时传入时，ID 集合必须恰好只包含 `callback_url` 匹配的 endpoint；否则返回
+- 使用 `callback_uri` 时，endpoint 必须订阅 `*`，或同时订阅阶段完成、Run 失败和 Run 取消事件；
+  否则返回 `422 callback_event_types_incomplete`。
+- 同时传入时，ID 集合必须恰好只包含 `callback_uri` 匹配的 endpoint；否则返回
   `422 callback_endpoint_mismatch`。未注册 URL 返回 `422 callback_endpoint_not_registered`，非 ACTIVE
   endpoint 返回 `409 webhook_endpoint_not_active`。
 - 两个字段都省略时，该 Run 不产生 delivery；endpoint 的 `event_types` 仍会过滤事件。
@@ -753,9 +756,11 @@ curl -sS -i "$AUTOML_API/v1/models/mdl_000000000001" \
 密钥轮换、启用、delivery outbox 查询和人工重投；API 进程内的 durable worker 会消费 outbox
 并实际发送 HMAC 签名的 HTTP 回调。
 
-创建 endpoint 后还必须在 `POST /v1/runs` 中传入完全一致的 `callback_url`，也可以同时传入
+创建 endpoint 后还必须在 `POST /v1/runs` 中传入完全一致的 `callback_uri`，也可以同时传入
 对应的 `webhook_endpoint_ids`。未绑定 endpoint 的 Run 不会广播到租户其他 endpoint。
 callback 是至少一次投递，接收方按 `X-AutoML-Delivery-Id` 去重。
+阶段结束事件的信封包含 `callback` 摘要，直接给出 `toolname/stage/states/next_stage/reason`；
+完整契约见[阶段 Callback 契约](stage-callback-contract.md)。
 投递耗尽后人工重投窗口默认为 30 天，由
 `AUTOML_WEBHOOK_REDELIVERY_RETENTION_DAYS` 独立配置；过期调用重投路由返回
 `410 webhook_redelivery_expired`。`:enable` 后会跳过已耗尽记录，并按顺序继续后续
@@ -825,7 +830,7 @@ curl -sS -i "$AUTOML_API/v1/deletions/del_000000000001" \
 3. `POST /v1/datasets`：创建上传会话。
 4. `PUT /v1/dataset-versions/{dataset_version_id}/upload-parts/{part_number}`：上传数据字节。
 5. `POST /v1/dataset-versions/{dataset_version_id}:finalize`：完成数据版本。
-6. `POST /v1/runs`：用 `callback_url`/`webhook_endpoint_ids` 绑定本 Run，不会广播到租户其他 endpoint。
+6. `POST /v1/runs`：用 `callback_uri`/`webhook_endpoint_ids` 绑定本 Run，不会广播到租户其他 endpoint。
 7. 验签并按 delivery ID 幂等处理 `run.stage_completed.v1`；用 JSON events/SSE 补拉。
 8. `GET /v1/runs/{run_id}` 或 `GET /v1/runs/{run_id}/events`：观察权威进度。
 9. `GET /v1/runs/{run_id}/decision-packets?status=OPEN`：如进入 `WAITING_USER`，读取问题。

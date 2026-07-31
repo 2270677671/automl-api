@@ -1533,20 +1533,28 @@ components:
         autonomy: {$ref: '#/components/schemas/AutonomyPolicy'}
         policy: {$ref: '#/components/schemas/RunPolicy'}
         budget: {$ref: '#/components/schemas/RunBudget'}
-        callback_url:
+        callback_uri:
           type: [string, 'null']
           format: uri
           description: |
-            可选阶段回调 URL。必须与当前租户通过 POST /v1/webhook-endpoints 预注册且 ACTIVE
-            的 URL 完全一致；服务使用该 endpoint 的一次性 signing_secret 对回调签名。
+            可选阶段回调 URI。必须与当前租户通过 POST /v1/webhook-endpoints 预注册且 ACTIVE
+            的 URI 完全一致；服务使用该 endpoint 的一次性 signing_secret 对回调签名。
             只传此字段时必须唯一匹配一个 endpoint；重复 URL 会返回 409。
+            每个阶段结束后，签名 WebhookEnvelope.callback 返回阶段状态和下一阶段准入结果。
+            endpoint.event_types 必须包含 *，或同时包含 run.stage_completed.v1、
+            run.failed.v1 和 run.canceled.v1，否则创建 Run 返回 422。
+        callback_url:
+          type: [string, 'null']
+          format: uri
+          deprecated: true
+          description: callback_uri 的兼容别名；同时传入时两者必须完全一致。
         webhook_endpoint_ids:
           type: array
           uniqueItems: true
           items: {type: string}
           description: |
             可选的当前租户 ACTIVE endpoint ID 集合。只传本字段时可绑定多个 endpoint；
-            与 callback_url 同时传入时必须恰好只选中该 URL 对应的 endpoint，否则返回 422。
+            与 callback_uri 同时传入时必须恰好只选中该 URI 对应的 endpoint，否则返回 422。
             两个字段都省略时本 Run 不产生 Webhook delivery。endpoint.event_types 仍会过滤事件。
 
     Objective:
@@ -1670,7 +1678,11 @@ components:
             type: string
             enum: [PAUSE, RESUME, CANCEL, ANSWER, APPROVE, REQUEST_CHANGES, REJECT]
         budget_usage: {$ref: '#/components/schemas/BudgetUsage'}
-        callback_url: {type: [string, 'null'], format: uri}
+        callback_uri: {type: [string, 'null'], format: uri}
+        callback_url:
+          type: [string, 'null']
+          format: uri
+          deprecated: true
         webhook_endpoint_ids:
           type: array
           uniqueItems: true
@@ -1861,6 +1873,12 @@ components:
                   oneOf:
                     - $ref: '#/components/schemas/RunPhase'
                     - type: 'null'
+                next_stage_ready:
+                  type: [boolean, 'null']
+                  description: 当前阶段结束后是否已经具备进入 next_phase 的条件。
+                reason:
+                  type: [string, 'null']
+                  description: next_stage_ready=false 时的稳定原因代码。
 
     ProgressUpdatedEvent:
       allOf:
@@ -1964,6 +1982,10 @@ components:
                 failure_code: {type: string}
                 retriable: {type: boolean}
                 result_href: {type: string, format: uri-reference}
+                phase:
+                  oneOf:
+                    - $ref: '#/components/schemas/RunPhase'
+                    - type: 'null'
 
     RunCanceledEvent:
       allOf:
@@ -1978,6 +2000,10 @@ components:
               properties:
                 outcome: {type: string, const: CANCELED}
                 result_href: {type: string, format: uri-reference}
+                phase:
+                  oneOf:
+                    - $ref: '#/components/schemas/RunPhase'
+                    - type: 'null'
 
     RunExpiredEvent:
       allOf:
@@ -2995,6 +3021,47 @@ components:
         webhook_endpoint_id: {type: string}
         attempt: {type: integer, minimum: 1}
         event: {$ref: '#/components/schemas/RunEvent'}
+        callback:
+          oneOf:
+            - $ref: '#/components/schemas/StageCallbackPayload'
+            - type: 'null'
+          description: 阶段成功、失败或取消事件的紧凑摘要；其他事件不包含本字段。
+
+    StageCallbackPayload:
+      type: object
+      additionalProperties: false
+      required:
+        - schema_version
+        - toolname
+        - run_id
+        - event_id
+        - seq
+        - occurred_at
+        - stage
+        - states
+        - next_stage
+        - next_stage_name
+        - reason
+      properties:
+        schema_version: {type: string, const: '1.0'}
+        toolname: {type: string, const: automl}
+        run_id: {type: string}
+        event_id: {type: string}
+        seq: {type: integer, minimum: 1}
+        occurred_at: {type: string, format: date-time}
+        stage:
+          type: string
+          enum: [data_read, data_analysis, task_recognition, model_training, model_evaluation, result_package]
+        states: {type: string, enum: [success, failed, canceled]}
+        next_stage:
+          type: boolean
+          description: 是否已经具备进入 next_stage_name 的条件；不是字符串。
+        next_stage_name:
+          type: [string, 'null']
+          enum: [data_read, data_analysis, task_recognition, model_training, model_evaluation, result_package, null]
+        reason:
+          type: [string, 'null']
+          description: 阻断、失败、取消或流程结束的稳定小写原因代码。
 
     DeletionJob:
       type: object

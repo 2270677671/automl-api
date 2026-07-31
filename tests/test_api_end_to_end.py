@@ -239,6 +239,7 @@ def test_pause_resume_stale_revision_and_cancel_without_if_match(client: TestCli
     assert canceled_events[0]["payload"] == {
         "outcome": "CANCELED",
         "result_href": f"/v1/runs/{run_id}/result",
+        "phase": "PLAN",
     }
     new_cancel = client.post(
         f"/v1/runs/{run_id}:cancel", headers=mutation_headers("new-cancel-key-0001")

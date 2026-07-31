@@ -147,18 +147,23 @@ curl -sS -X POST "$AUTOML_API/v1/runs" \
       "max_wall_time_seconds": 3600,
       "max_llm_tokens": 0
     },
-    "callback_url": "https://agent.example.com/automl/callback",
+    "callback_uri": "https://agent.example.com/automl/callback",
     "webhook_endpoint_ids": ["wh_123"]
   }'
 ```
 
-`callback_url` 可选，但不能是未经注册的裸地址。先用 `POST /v1/webhook-endpoints` 注册 URL，
+`callback_uri` 可选，但不能是未经注册的裸地址。先用 `POST /v1/webhook-endpoints` 注册 URI，
 安全保存只返回一次的 `signing_secret`，再把完全相同的 URL 和 endpoint ID 传给创建 Run。
 两者不一致返回 `422`；未指定时该 Run 不产生 webhook delivery，避免同租户不同 Agent 应用串流。
 生产默认只允许 HTTPS 公网目的地址；确需内网 callback 时，由部署方在
 `AUTOML_WEBHOOK_ALLOWED_CIDRS` 中显式加入最小 CIDR。每次发送前仍会重新解析并校验目的 IP，
 实际连接固定到该已校验 IP，同时保留原始 Host、TLS SNI 和证书主机名校验；
 不跟随重定向，也不读取环境代理。
+
+阶段完成、失败或取消通知的签名信封包含 `callback` 摘要，例如
+`{"toolname":"automl","stage":"data_read","states":"success","next_stage":true,"reason":null}`。
+`next_stage` 是 boolean；完整阶段映射、阻断语义和验签要求见
+[阶段 Callback 契约](stage-callback-contract.md)。`callback_url` 仅作为旧客户端兼容别名保留。
 
 `objective.backend_id` 可省略；此时使用 manifest 的 `default_backend_id`。AutoGluon、TabPFN 等
 标准后端如果列在 `backends[]` 但状态为 `UNAVAILABLE`，调用方应展示 `unavailable_reason` 并改选其他
