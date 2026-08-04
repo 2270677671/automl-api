@@ -1,0 +1,9 @@
+{
+  "body": null,
+  "headers": {
+    "Authorization": "Bearer <AUTOML_TOKEN>"
+  },
+  "method": "GET",
+  "path": "/v1/dataset-versions/dsv_000000000001",
+  "query": {}
+}

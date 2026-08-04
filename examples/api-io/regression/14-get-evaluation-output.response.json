@@ -1,0 +1,153 @@
+{
+  "body": {
+    "artifact_refs": [
+      {
+        "artifact_id": "art_000000000010",
+        "href": "/v1/artifacts/art_000000000010",
+        "kind": "EVALUATION_METRIC_COMPARISON_PNG",
+        "media_type": "image/png",
+        "sha256": "044fb3c085a3e04d90271ab61f019777282fba3ed73caa4094dd70997e52a526",
+        "size_bytes": 27011
+      },
+      {
+        "artifact_id": "art_000000000011",
+        "href": "/v1/artifacts/art_000000000011",
+        "kind": "EVALUATION_OBSERVED_VS_PREDICTED_PNG",
+        "media_type": "image/png",
+        "sha256": "7941e1a2eb02b88f90aa1111149b8167358dec2e3a54a7520e98fea636ed7f7f",
+        "size_bytes": 49434
+      },
+      {
+        "artifact_id": "art_000000000012",
+        "href": "/v1/artifacts/art_000000000012",
+        "kind": "EVALUATION_RESIDUALS_VS_PREDICTED_PNG",
+        "media_type": "image/png",
+        "sha256": "c021b492cf11fd9bb36754293e660ea7976198237adf4f9fdcaa15859567871b",
+        "size_bytes": 35086
+      },
+      {
+        "artifact_id": "art_000000000013",
+        "href": "/v1/artifacts/art_000000000013",
+        "kind": "EVALUATION_RESIDUAL_DISTRIBUTION_PNG",
+        "media_type": "image/png",
+        "sha256": "6f2d5eb3fb308c0f8774edd78c1e1352ebf1ba70a72c9ff5cf2eaad798b8d7b4",
+        "size_bytes": 26770
+      }
+    ],
+    "created_at": "2026-08-02T06:29:44.413298Z",
+    "created_seq": 14,
+    "lineage": {
+      "dataset_version_id": "dsv_000000000002",
+      "evidence_refs": [],
+      "method_version": "tabular-sklearn.v1",
+      "parent_refs": [],
+      "policy_version": "policy.m2-local",
+      "split_manifest_output_id": "out_000000000012",
+      "task_spec_output_id": "out_000000000011"
+    },
+    "output_id": "out_000000000016",
+    "payload": {
+      "baseline": {
+        "confidence_interval": null,
+        "direction": "MINIMIZE",
+        "name": "rmse",
+        "value": 1977.3984188652687
+      },
+      "candidate": {
+        "confidence_interval": null,
+        "direction": "MINIMIZE",
+        "name": "rmse",
+        "value": 282.179764861637
+      },
+      "eligible_candidate": false,
+      "failed_gates": [
+        "PRODUCTION_ELIGIBILITY_NOT_EVALUATED"
+      ],
+      "guardrails_passed": false,
+      "kind": "EVALUATION_REPORT",
+      "limitations": [
+        "This slice assumes one i.i.d. table.",
+        "No production eligibility or deployment approval was evaluated."
+      ],
+      "paired_delta": {
+        "confidence_interval": null,
+        "direction": "MINIMIZE",
+        "name": "rmse",
+        "value": 1695.2186540036316
+      },
+      "primary_metric": "rmse",
+      "visualization_status": "COMPLETE",
+      "visualizations": [
+        {
+          "aggregate_only": true,
+          "artifact_id": "art_000000000010",
+          "chart_type": "METRIC_COMPARISON",
+          "contains_raw_rows": false,
+          "failure_code": null,
+          "media_type": "image/png",
+          "sample_count": 72,
+          "sha256": "044fb3c085a3e04d90271ab61f019777282fba3ed73caa4094dd70997e52a526",
+          "size_bytes": 27011,
+          "source_partition": "SEALED_HOLDOUT",
+          "status": "GENERATED"
+        },
+        {
+          "aggregate_only": true,
+          "artifact_id": "art_000000000011",
+          "chart_type": "OBSERVED_VS_PREDICTED",
+          "contains_raw_rows": false,
+          "failure_code": null,
+          "media_type": "image/png",
+          "sample_count": 72,
+          "sha256": "7941e1a2eb02b88f90aa1111149b8167358dec2e3a54a7520e98fea636ed7f7f",
+          "size_bytes": 49434,
+          "source_partition": "SEALED_HOLDOUT",
+          "status": "GENERATED"
+        },
+        {
+          "aggregate_only": true,
+          "artifact_id": "art_000000000012",
+          "chart_type": "RESIDUALS_VS_PREDICTED",
+          "contains_raw_rows": false,
+          "failure_code": null,
+          "media_type": "image/png",
+          "sample_count": 72,
+          "sha256": "c021b492cf11fd9bb36754293e660ea7976198237adf4f9fdcaa15859567871b",
+          "size_bytes": 35086,
+          "source_partition": "SEALED_HOLDOUT",
+          "status": "GENERATED"
+        },
+        {
+          "aggregate_only": true,
+          "artifact_id": "art_000000000013",
+          "chart_type": "RESIDUAL_DISTRIBUTION",
+          "contains_raw_rows": false,
+          "failure_code": null,
+          "media_type": "image/png",
+          "sample_count": 72,
+          "sha256": "6f2d5eb3fb308c0f8774edd78c1e1352ebf1ba70a72c9ff5cf2eaad798b8d7b4",
+          "size_bytes": 26770,
+          "source_partition": "SEALED_HOLDOUT",
+          "status": "GENERATED"
+        }
+      ]
+    },
+    "phase": "EVALUATE",
+    "run_id": "run_000000000002",
+    "run_revision": 2,
+    "schema_version": "1.0",
+    "state": "FINAL",
+    "summary": {
+      "code": "CANDIDATE_EVALUATED",
+      "message": "The frozen candidate was evaluated once on the sealed holdout.",
+      "severity": "INFO"
+    },
+    "supersedes": null,
+    "type": "EVALUATION_REPORT"
+  },
+  "headers": {
+    "content-length": "3599",
+    "content-type": "application/json"
+  },
+  "status_code": 200
+}

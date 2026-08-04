@@ -1,0 +1,20 @@
+{
+  "body": {
+    "parts": [
+      {
+        "etag": "\"1f475d0153648dbb0ce0029c22abbef2c5128081120b330919d2070d13b720c8\"",
+        "part_number": 1
+      }
+    ],
+    "sha256": "1f475d0153648dbb0ce0029c22abbef2c5128081120b330919d2070d13b720c8",
+    "upload_id": "upload_000000000002"
+  },
+  "headers": {
+    "Authorization": "Bearer <AUTOML_TOKEN>",
+    "Content-Type": "application/json",
+    "Idempotency-Key": "api-io-regression-finalize-0001"
+  },
+  "method": "POST",
+  "path": "/v1/dataset-versions/dsv_000000000002:finalize",
+  "query": {}
+}

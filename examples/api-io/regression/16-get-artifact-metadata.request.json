@@ -1,0 +1,9 @@
+{
+  "body": null,
+  "headers": {
+    "Authorization": "Bearer <AUTOML_TOKEN>"
+  },
+  "method": "GET",
+  "path": "/v1/artifacts/art_000000000010",
+  "query": {}
+}

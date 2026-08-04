@@ -1,0 +1,135 @@
+{
+  "body": {
+    "api_version": "v1",
+    "available_actions": [
+      "PAUSE",
+      "CANCEL"
+    ],
+    "blocking": {
+      "approval_ids": [],
+      "decision_packet_ids": []
+    },
+    "budget_usage": {
+      "compute_credits": {
+        "limit": 1.0,
+        "used": 0.0
+      },
+      "llm_tokens": {
+        "limit": 0.0,
+        "used": 0.0
+      },
+      "trials": {
+        "limit": 2.0,
+        "used": 0.0
+      },
+      "wall_time_seconds": {
+        "limit": 1200.0,
+        "used": 0.0
+      }
+    },
+    "callback_uri": null,
+    "callback_url": null,
+    "contract_versions": {
+      "event_schema": "1.0",
+      "output_schema": "1.0",
+      "policy_version": "policy.m2-local",
+      "tool_versions": {
+        "sklearn": "1.7.2"
+      }
+    },
+    "created_at": "2026-08-02T06:29:42.226149Z",
+    "dataset_version_id": "dsv_000000000001",
+    "latest_output_refs": [],
+    "links": {
+      "events": "/v1/runs/run_000000000001/events",
+      "outputs": "/v1/runs/run_000000000001/outputs",
+      "result": "/v1/runs/run_000000000001/result",
+      "self": "/v1/runs/run_000000000001"
+    },
+    "outcome": null,
+    "phase": "INGEST",
+    "plan_version": 1,
+    "progress": {
+      "completed_steps": 0,
+      "current_step": {
+        "code": "QUEUED",
+        "message": "Run queued for profiling",
+        "title": "Run queued for profiling"
+      },
+      "estimate_revision": 1,
+      "eta_seconds": null,
+      "percent": 0.0,
+      "plan_version": 1,
+      "total_steps": 5
+    },
+    "retained_from_seq": 1,
+    "run_id": "run_000000000001",
+    "run_revision": 1,
+    "snapshot_seq": 0,
+    "stages": [
+      {
+        "completed_at": null,
+        "latest_output_refs": [],
+        "message": "ingest stage",
+        "phase": "INGEST",
+        "progress_percent": 35.0,
+        "started_at": "2026-08-02T06:29:42.226163Z",
+        "status": "RUNNING"
+      },
+      {
+        "completed_at": null,
+        "latest_output_refs": [],
+        "message": "profile stage",
+        "phase": "PROFILE",
+        "progress_percent": 0.0,
+        "started_at": null,
+        "status": "PENDING"
+      },
+      {
+        "completed_at": null,
+        "latest_output_refs": [],
+        "message": "plan stage",
+        "phase": "PLAN",
+        "progress_percent": 0.0,
+        "started_at": null,
+        "status": "PENDING"
+      },
+      {
+        "completed_at": null,
+        "latest_output_refs": [],
+        "message": "train stage",
+        "phase": "TRAIN",
+        "progress_percent": 0.0,
+        "started_at": null,
+        "status": "PENDING"
+      },
+      {
+        "completed_at": null,
+        "latest_output_refs": [],
+        "message": "evaluate stage",
+        "phase": "EVALUATE",
+        "progress_percent": 0.0,
+        "started_at": null,
+        "status": "PENDING"
+      },
+      {
+        "completed_at": null,
+        "latest_output_refs": [],
+        "message": "package stage",
+        "phase": "PACKAGE",
+        "progress_percent": 0.0,
+        "started_at": null,
+        "status": "PENDING"
+      }
+    ],
+    "status": "QUEUED",
+    "updated_at": "2026-08-02T06:29:42.226149Z",
+    "webhook_endpoint_ids": []
+  },
+  "headers": {
+    "content-length": "2130",
+    "content-type": "application/json",
+    "etag": "\"5ce2e9f6b3d82e021317a8e55fd3a03c292c6e16adddba2bb70a1c91422b5575\""
+  },
+  "status_code": 200
+}

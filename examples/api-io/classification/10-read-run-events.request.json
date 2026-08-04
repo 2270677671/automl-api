@@ -1,0 +1,12 @@
+{
+  "body": null,
+  "headers": {
+    "Authorization": "Bearer <AUTOML_TOKEN>"
+  },
+  "method": "GET",
+  "path": "/v1/runs/run_000000000001/events",
+  "query": {
+    "after_seq": 0,
+    "limit": 100
+  }
+}

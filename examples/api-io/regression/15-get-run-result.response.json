@@ -1,0 +1,124 @@
+{
+  "body": {
+    "backend_id": "sklearn",
+    "backend_version": "1.7.2",
+    "completed_at": "2026-08-02T06:29:44.523522Z",
+    "eligible_model": null,
+    "engine_version": "tabular-sklearn.v1",
+    "model_disposition": "NO_ELIGIBLE_MODEL",
+    "outcome": "SUCCEEDED",
+    "output_refs": [
+      {
+        "href": "/v1/runs/run_000000000002/outputs/out_000000000010",
+        "output_id": "out_000000000010",
+        "state": "FINAL",
+        "type": "DATA_QUALITY_REPORT"
+      },
+      {
+        "href": "/v1/runs/run_000000000002/outputs/out_000000000011",
+        "output_id": "out_000000000011",
+        "state": "FINAL",
+        "type": "TASK_SPEC"
+      },
+      {
+        "href": "/v1/runs/run_000000000002/outputs/out_000000000012",
+        "output_id": "out_000000000012",
+        "state": "FINAL",
+        "type": "SPLIT_MANIFEST"
+      },
+      {
+        "href": "/v1/runs/run_000000000002/outputs/out_000000000013",
+        "output_id": "out_000000000013",
+        "state": "FINAL",
+        "type": "BASELINE_RESULT"
+      },
+      {
+        "href": "/v1/runs/run_000000000002/outputs/out_000000000014",
+        "output_id": "out_000000000014",
+        "state": "FINAL",
+        "type": "TRIAL_RESULT"
+      },
+      {
+        "href": "/v1/runs/run_000000000002/outputs/out_000000000015",
+        "output_id": "out_000000000015",
+        "state": "FINAL",
+        "type": "TRIAL_RESULT"
+      },
+      {
+        "href": "/v1/runs/run_000000000002/outputs/out_000000000016",
+        "output_id": "out_000000000016",
+        "state": "FINAL",
+        "type": "EVALUATION_REPORT"
+      },
+      {
+        "href": "/v1/runs/run_000000000002/outputs/out_000000000017",
+        "output_id": "out_000000000017",
+        "state": "FINAL",
+        "type": "MODEL_CARD"
+      },
+      {
+        "href": "/v1/runs/run_000000000002/outputs/out_000000000018",
+        "output_id": "out_000000000018",
+        "state": "FINAL",
+        "type": "RUN_REPORT"
+      }
+    ],
+    "partial": false,
+    "reason": {
+      "code": "EVALUATED_CANDIDATE_REQUIRES_GATES",
+      "evidence_refs": [
+        "out_000000000016"
+      ],
+      "failed_gates": [
+        "PRODUCTION_ELIGIBILITY_NOT_EVALUATED"
+      ],
+      "message": "No business threshold, risk approval, or production gate was evaluated.",
+      "remediation": [
+        "Define quality and risk gates before model registration."
+      ],
+      "retriable": false
+    },
+    "result_manifest_id": "res_000000000002",
+    "run_id": "run_000000000002",
+    "summary": "The real dataset was evaluated and an offline model artifact was produced.",
+    "visualization_refs": [
+      {
+        "artifact_id": "art_000000000010",
+        "href": "/v1/artifacts/art_000000000010",
+        "kind": "EVALUATION_METRIC_COMPARISON_PNG",
+        "media_type": "image/png",
+        "sha256": "044fb3c085a3e04d90271ab61f019777282fba3ed73caa4094dd70997e52a526",
+        "size_bytes": 27011
+      },
+      {
+        "artifact_id": "art_000000000011",
+        "href": "/v1/artifacts/art_000000000011",
+        "kind": "EVALUATION_OBSERVED_VS_PREDICTED_PNG",
+        "media_type": "image/png",
+        "sha256": "7941e1a2eb02b88f90aa1111149b8167358dec2e3a54a7520e98fea636ed7f7f",
+        "size_bytes": 49434
+      },
+      {
+        "artifact_id": "art_000000000012",
+        "href": "/v1/artifacts/art_000000000012",
+        "kind": "EVALUATION_RESIDUALS_VS_PREDICTED_PNG",
+        "media_type": "image/png",
+        "sha256": "c021b492cf11fd9bb36754293e660ea7976198237adf4f9fdcaa15859567871b",
+        "size_bytes": 35086
+      },
+      {
+        "artifact_id": "art_000000000013",
+        "href": "/v1/artifacts/art_000000000013",
+        "kind": "EVALUATION_RESIDUAL_DISTRIBUTION_PNG",
+        "media_type": "image/png",
+        "sha256": "6f2d5eb3fb308c0f8774edd78c1e1352ebf1ba70a72c9ff5cf2eaad798b8d7b4",
+        "size_bytes": 26770
+      }
+    ]
+  },
+  "headers": {
+    "content-length": "2902",
+    "content-type": "application/json"
+  },
+  "status_code": 200
+}

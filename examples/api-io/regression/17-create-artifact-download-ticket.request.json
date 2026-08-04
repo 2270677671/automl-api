@@ -1,0 +1,10 @@
+{
+  "body": null,
+  "headers": {
+    "Authorization": "Bearer <AUTOML_TOKEN>",
+    "Idempotency-Key": "api-io-regression-artifact-download-0001"
+  },
+  "method": "POST",
+  "path": "/v1/artifacts/art_000000000010:download",
+  "query": {}
+}

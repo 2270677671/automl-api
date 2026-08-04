@@ -1,0 +1,17 @@
+{
+  "body": {
+    "file": "../../data/classification_360.csv",
+    "media_type": "text/csv",
+    "sha256": "ff76b47ff7a1b93dde983c495c55ffb7425af7691a237d74d449f2c00e29caec",
+    "size_bytes": 12102
+  },
+  "headers": {
+    "Authorization": "Bearer <AUTOML_TOKEN>",
+    "Content-Length": "12102",
+    "Content-Type": "text/csv",
+    "x-automl-upload-part": "1"
+  },
+  "method": "PUT",
+  "path": "http://127.0.0.1:18766/v1/dataset-versions/dsv_000000000001/upload-parts/1?upload_id=upload_000000000001",
+  "query": {}
+}

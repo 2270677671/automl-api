@@ -1,0 +1,147 @@
+{
+  "case": "classification",
+  "dataset_file": "../../data/classification_360.csv",
+  "dataset_rows": 360,
+  "dataset_sha256": "ff76b47ff7a1b93dde983c495c55ffb7425af7691a237d74d449f2c00e29caec",
+  "interfaces": [
+    {
+      "interface": "GET /v1/agent/manifest",
+      "number": 1,
+      "request_file": "01-get-agent-manifest.request.json",
+      "response_file": "01-get-agent-manifest.response.json",
+      "status_code": 200
+    },
+    {
+      "interface": "POST /v1/datasets",
+      "number": 2,
+      "request_file": "02-create-dataset-upload.request.json",
+      "response_file": "02-create-dataset-upload.response.json",
+      "status_code": 201
+    },
+    {
+      "interface": "PUT http://127.0.0.1:18766/v1/dataset-versions/dsv_000000000001/upload-parts/1?upload_id=upload_000000000001",
+      "number": 3,
+      "request_file": "03-upload-dataset-part.request.json",
+      "response_file": "03-upload-dataset-part.response.json",
+      "status_code": 204
+    },
+    {
+      "interface": "POST /v1/dataset-versions/dsv_000000000001:finalize",
+      "number": 4,
+      "request_file": "04-finalize-dataset-version.request.json",
+      "response_file": "04-finalize-dataset-version.response.json",
+      "status_code": 202
+    },
+    {
+      "interface": "GET /v1/dataset-versions/dsv_000000000001",
+      "number": 5,
+      "request_file": "05-get-dataset-version.request.json",
+      "response_file": "05-get-dataset-version.response.json",
+      "status_code": 200
+    },
+    {
+      "interface": "POST /v1/runs",
+      "number": 6,
+      "request_file": "06-create-run.request.json",
+      "response_file": "06-create-run.response.json",
+      "status_code": 202
+    },
+    {
+      "interface": "GET /v1/runs/run_000000000001",
+      "number": 7,
+      "request_file": "07-get-run-initial.request.json",
+      "response_file": "07-get-run-initial.response.json",
+      "status_code": 200
+    },
+    {
+      "interface": "GET /v1/runs/run_000000000001",
+      "number": 8,
+      "request_file": "08-get-run-terminal.request.json",
+      "response_file": "08-get-run-terminal.response.json",
+      "status_code": 200
+    },
+    {
+      "interface": "GET /v1/runs/run_000000000001/stages",
+      "number": 9,
+      "request_file": "09-list-run-stages.request.json",
+      "response_file": "09-list-run-stages.response.json",
+      "status_code": 200
+    },
+    {
+      "interface": "GET /v1/runs/run_000000000001/events",
+      "number": 10,
+      "request_file": "10-read-run-events.request.json",
+      "response_file": "10-read-run-events.response.json",
+      "status_code": 200
+    },
+    {
+      "interface": "GET /v1/runs/run_000000000001/agent-context",
+      "number": 11,
+      "request_file": "11-get-agent-context.request.json",
+      "response_file": "11-get-agent-context.response.json",
+      "status_code": 200
+    },
+    {
+      "interface": "GET /v1/runs/run_000000000001/agent-actions",
+      "number": 12,
+      "request_file": "12-list-agent-actions.request.json",
+      "response_file": "12-list-agent-actions.response.json",
+      "status_code": 200
+    },
+    {
+      "interface": "GET /v1/runs/run_000000000001/outputs",
+      "number": 13,
+      "request_file": "13-list-run-outputs.request.json",
+      "response_file": "13-list-run-outputs.response.json",
+      "status_code": 200
+    },
+    {
+      "interface": "GET /v1/runs/run_000000000001/outputs/out_000000000007",
+      "number": 14,
+      "request_file": "14-get-evaluation-output.request.json",
+      "response_file": "14-get-evaluation-output.response.json",
+      "status_code": 200
+    },
+    {
+      "interface": "GET /v1/runs/run_000000000001/result",
+      "number": 15,
+      "request_file": "15-get-run-result.request.json",
+      "response_file": "15-get-run-result.response.json",
+      "status_code": 200
+    },
+    {
+      "interface": "GET /v1/artifacts/art_000000000002",
+      "number": 16,
+      "request_file": "16-get-artifact-metadata.request.json",
+      "response_file": "16-get-artifact-metadata.response.json",
+      "status_code": 200
+    },
+    {
+      "interface": "POST /v1/artifacts/art_000000000002:download",
+      "number": 17,
+      "request_file": "17-create-artifact-download-ticket.request.json",
+      "response_file": "17-create-artifact-download-ticket.response.json",
+      "status_code": 201
+    },
+    {
+      "interface": "GET /v1/artifact-downloads/<REDACTED_EPHEMERAL_TICKET>",
+      "number": 18,
+      "request_file": "18-download-artifact-by-ticket.request.json",
+      "response_file": "18-download-artifact-by-ticket.response.json",
+      "status_code": 200
+    }
+  ],
+  "notes": [
+    "Authorization values are redacted in request files.",
+    "The artifact ticket URL and required headers are redacted in response files.",
+    "GET /v1/runs/{run_id} is polled until TERMINAL; initial and terminal examples are recorded.",
+    "Only the first visualization is downloaded because all visualization downloads use the same interface."
+  ],
+  "primary_metric": {
+    "confidence_interval": null,
+    "direction": "MAXIMIZE",
+    "name": "roc_auc",
+    "value": 0.791871921182266
+  },
+  "run_id": "run_000000000001"
+}

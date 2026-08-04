@@ -1,0 +1,37 @@
+{
+  "body": {
+    "autonomy": {
+      "mode": "GUIDED",
+      "production_deploy": "DISABLED"
+    },
+    "budget": {
+      "max_compute_credits": 1,
+      "max_llm_tokens": 0,
+      "max_trials": 2,
+      "max_wall_time_seconds": 1200
+    },
+    "dataset_version_id": "dsv_000000000002",
+    "objective": {
+      "backend_id": "sklearn",
+      "business_context": "Estimate monthly rent from property attributes.",
+      "iid_confirmed": true,
+      "positive_class": null,
+      "primary_metric": "rmse",
+      "target_column": "monthly_rent",
+      "task_type": "REGRESSION"
+    },
+    "policy": {
+      "allow_external_llm": true,
+      "allow_pii": false,
+      "risk_tier": "STANDARD"
+    }
+  },
+  "headers": {
+    "Authorization": "Bearer <AUTOML_TOKEN>",
+    "Content-Type": "application/json",
+    "Idempotency-Key": "api-io-regression-run-0001"
+  },
+  "method": "POST",
+  "path": "/v1/runs",
+  "query": {}
+}

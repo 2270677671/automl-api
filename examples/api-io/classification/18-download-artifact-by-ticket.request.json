@@ -1,0 +1,10 @@
+{
+  "body": null,
+  "headers": {
+    "Authorization": "Bearer <AUTOML_TOKEN>",
+    "If-Match": "\"4d2021df035ac8cd6bf3d08c25ef897c1442f637493aee527b9efd3e25209756\""
+  },
+  "method": "GET",
+  "path": "/v1/artifact-downloads/<REDACTED_EPHEMERAL_TICKET>",
+  "query": {}
+}

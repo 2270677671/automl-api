@@ -1,0 +1,24 @@
+{
+  "body": {
+    "dataset_id": "ds_000000000002",
+    "dataset_version_id": "dsv_000000000002",
+    "expires_at": "2026-08-02T07:29:43.342135Z",
+    "parts": [
+      {
+        "expires_at": "2026-08-02T07:29:43.342135Z",
+        "part_number": 1,
+        "required_headers": {
+          "x-automl-upload-part": "1"
+        },
+        "url": "http://127.0.0.1:18766/v1/dataset-versions/dsv_000000000002/upload-parts/1?upload_id=upload_000000000002"
+      }
+    ],
+    "status": "UPLOADING",
+    "upload_id": "upload_000000000002"
+  },
+  "headers": {
+    "content-length": "402",
+    "content-type": "application/json"
+  },
+  "status_code": 201
+}

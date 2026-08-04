@@ -1,0 +1,13 @@
+{
+  "body": {
+    "binary": true,
+    "sha256": "4d2021df035ac8cd6bf3d08c25ef897c1442f637493aee527b9efd3e25209756",
+    "size_bytes": 33872
+  },
+  "headers": {
+    "content-length": "33872",
+    "content-type": "image/png",
+    "etag": "\"4d2021df035ac8cd6bf3d08c25ef897c1442f637493aee527b9efd3e25209756\""
+  },
+  "status_code": 200
+}

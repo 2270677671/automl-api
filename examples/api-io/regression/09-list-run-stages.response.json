@@ -1,0 +1,67 @@
+{
+  "body": {
+    "run_id": "run_000000000002",
+    "snapshot_seq": 20,
+    "stages": [
+      {
+        "completed_at": "2026-08-02T06:29:44.523538Z",
+        "latest_output_refs": [],
+        "message": "ingest stage",
+        "phase": "INGEST",
+        "progress_percent": 100.0,
+        "started_at": "2026-08-02T06:29:44.523538Z",
+        "status": "COMPLETED"
+      },
+      {
+        "completed_at": "2026-08-02T06:29:44.523538Z",
+        "latest_output_refs": [],
+        "message": "profile stage",
+        "phase": "PROFILE",
+        "progress_percent": 100.0,
+        "started_at": "2026-08-02T06:29:44.523538Z",
+        "status": "COMPLETED"
+      },
+      {
+        "completed_at": "2026-08-02T06:29:44.523538Z",
+        "latest_output_refs": [],
+        "message": "plan stage",
+        "phase": "PLAN",
+        "progress_percent": 100.0,
+        "started_at": "2026-08-02T06:29:44.523538Z",
+        "status": "COMPLETED"
+      },
+      {
+        "completed_at": "2026-08-02T06:29:44.523538Z",
+        "latest_output_refs": [],
+        "message": "train stage",
+        "phase": "TRAIN",
+        "progress_percent": 100.0,
+        "started_at": "2026-08-02T06:29:44.523538Z",
+        "status": "COMPLETED"
+      },
+      {
+        "completed_at": "2026-08-02T06:29:44.523538Z",
+        "latest_output_refs": [],
+        "message": "evaluate stage",
+        "phase": "EVALUATE",
+        "progress_percent": 100.0,
+        "started_at": "2026-08-02T06:29:44.523538Z",
+        "status": "COMPLETED"
+      },
+      {
+        "completed_at": "2026-08-02T06:29:44.523538Z",
+        "latest_output_refs": [],
+        "message": "package stage",
+        "phase": "PACKAGE",
+        "progress_percent": 100.0,
+        "started_at": "2026-08-02T06:29:44.523538Z",
+        "status": "COMPLETED"
+      }
+    ]
+  },
+  "headers": {
+    "content-length": "1272",
+    "content-type": "application/json"
+  },
+  "status_code": 200
+}

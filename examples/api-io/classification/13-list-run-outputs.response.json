@@ -1,0 +1,574 @@
+{
+  "body": {
+    "items": [
+      {
+        "artifact_refs": [],
+        "created_at": "2026-08-02T06:29:42.372454Z",
+        "created_seq": 3,
+        "lineage": {
+          "dataset_version_id": "dsv_000000000001",
+          "evidence_refs": [],
+          "method_version": "tabular-sklearn.v1",
+          "parent_refs": [],
+          "policy_version": "policy.m2-local",
+          "split_manifest_output_id": null,
+          "task_spec_output_id": null
+        },
+        "output_id": "out_000000000001",
+        "payload": {
+          "column_count": 9,
+          "issues": [],
+          "kind": "DATA_QUALITY_REPORT",
+          "quality_score": 100.0,
+          "row_count": 360
+        },
+        "phase": "PROFILE",
+        "run_id": "run_000000000001",
+        "run_revision": 1,
+        "schema_version": "1.0",
+        "state": "FINAL",
+        "summary": {
+          "code": "PRE_SPLIT_PROFILE_READY",
+          "message": "Dataset structure was parsed without exposing row values.",
+          "severity": "INFO"
+        },
+        "supersedes": null,
+        "type": "DATA_QUALITY_REPORT"
+      },
+      {
+        "artifact_refs": [],
+        "created_at": "2026-08-02T06:29:42.405562Z",
+        "created_seq": 5,
+        "lineage": {
+          "dataset_version_id": "dsv_000000000001",
+          "evidence_refs": [],
+          "method_version": "tabular-sklearn.v1",
+          "parent_refs": [],
+          "policy_version": "policy.m2-local",
+          "split_manifest_output_id": null,
+          "task_spec_output_id": null
+        },
+        "output_id": "out_000000000002",
+        "payload": {
+          "assumptions": [
+            "Rows were explicitly confirmed as i.i.d."
+          ],
+          "backend_id": "sklearn",
+          "confidence": 1.0,
+          "confirmed_by": "USER",
+          "engine_version": "tabular-sklearn.v1",
+          "guardrail_metrics": [],
+          "kind": "TASK_SPEC",
+          "positive_class": 1,
+          "primary_metric": "roc_auc",
+          "split_strategy": "STRATIFIED_HOLDOUT",
+          "target_column_id": "churned",
+          "task_type": "BINARY_CLASSIFICATION"
+        },
+        "phase": "PLAN",
+        "run_id": "run_000000000001",
+        "run_revision": 2,
+        "schema_version": "1.0",
+        "state": "FINAL",
+        "summary": {
+          "code": "TASK_SPEC_CONFIRMED",
+          "message": "The bounded tabular task specification is frozen.",
+          "severity": "INFO"
+        },
+        "supersedes": null,
+        "type": "TASK_SPEC"
+      },
+      {
+        "artifact_refs": [
+          {
+            "artifact_id": "art_000000000001",
+            "href": "/v1/artifacts/art_000000000001",
+            "kind": "SPLIT_MANIFEST_JSON",
+            "media_type": "application/json",
+            "sha256": "45d5e1f45384c4ad49d842e40a593d7174ae04f2f63a0f2ed10cd04cc2238f25",
+            "size_bytes": 33977
+          }
+        ],
+        "created_at": "2026-08-02T06:29:42.413220Z",
+        "created_seq": 6,
+        "lineage": {
+          "dataset_version_id": "dsv_000000000001",
+          "evidence_refs": [],
+          "method_version": "tabular-sklearn.v1",
+          "parent_refs": [],
+          "policy_version": "policy.m2-local",
+          "split_manifest_output_id": null,
+          "task_spec_output_id": "out_000000000002"
+        },
+        "output_id": "out_000000000003",
+        "payload": {
+          "kind": "SPLIT_MANIFEST",
+          "leakage_checks": [
+            {
+              "code": "EXACT_DUPLICATES_GROUPED",
+              "evidence_refs": [],
+              "message": "Exact duplicate usable feature rows were assigned as one group.",
+              "remediation": null,
+              "severity": "INFO"
+            },
+            {
+              "code": "FINAL_HOLDOUT_SEALED",
+              "evidence_refs": [],
+              "message": "The final holdout was unavailable to cross-validation and selection.",
+              "remediation": null,
+              "severity": "INFO"
+            }
+          ],
+          "strategy": "STRATIFIED_GROUP_HOLDOUT",
+          "test_rows": 72,
+          "train_rows": 288,
+          "validation_rows": 0
+        },
+        "phase": "PLAN",
+        "run_id": "run_000000000001",
+        "run_revision": 2,
+        "schema_version": "1.0",
+        "state": "FINAL",
+        "summary": {
+          "code": "SPLIT_FROZEN",
+          "message": "The development folds and sealed holdout are immutable.",
+          "severity": "INFO"
+        },
+        "supersedes": null,
+        "type": "SPLIT_MANIFEST"
+      },
+      {
+        "artifact_refs": [],
+        "created_at": "2026-08-02T06:29:42.678887Z",
+        "created_seq": 9,
+        "lineage": {
+          "dataset_version_id": "dsv_000000000001",
+          "evidence_refs": [],
+          "method_version": "tabular-sklearn.v1",
+          "parent_refs": [],
+          "policy_version": "policy.m2-local",
+          "split_manifest_output_id": "out_000000000003",
+          "task_spec_output_id": "out_000000000002"
+        },
+        "output_id": "out_000000000004",
+        "payload": {
+          "baselines": [
+            {
+              "compute_credits": 0.0,
+              "metrics": [
+                {
+                  "confidence_interval": null,
+                  "direction": "MAXIMIZE",
+                  "name": "roc_auc",
+                  "value": 0.5
+                }
+              ],
+              "name": "DUMMY_CLASSIFIER"
+            }
+          ],
+          "kind": "BASELINE_RESULT"
+        },
+        "phase": "TRAIN",
+        "run_id": "run_000000000001",
+        "run_revision": 2,
+        "schema_version": "1.0",
+        "state": "FINAL",
+        "summary": {
+          "code": "BASELINE_EVALUATED",
+          "message": "The naive baseline was evaluated on development folds.",
+          "severity": "INFO"
+        },
+        "supersedes": null,
+        "type": "BASELINE_RESULT"
+      },
+      {
+        "artifact_refs": [],
+        "created_at": "2026-08-02T06:29:42.684962Z",
+        "created_seq": 10,
+        "lineage": {
+          "dataset_version_id": "dsv_000000000001",
+          "evidence_refs": [],
+          "method_version": "tabular-sklearn.v1",
+          "parent_refs": [],
+          "policy_version": "policy.m2-local",
+          "split_manifest_output_id": "out_000000000003",
+          "task_spec_output_id": "out_000000000002"
+        },
+        "output_id": "out_000000000005",
+        "payload": {
+          "backend_id": "sklearn",
+          "compute_credits": 0.0,
+          "engine_version": "tabular-sklearn.v1",
+          "experiment_id": "exp_run_000000000001",
+          "failure_code": null,
+          "kind": "TRIAL_RESULT",
+          "metrics": [
+            {
+              "confidence_interval": null,
+              "direction": "MAXIMIZE",
+              "name": "roc_auc",
+              "value": 0.8260390284085397
+            }
+          ],
+          "model_family": "LOGISTIC_REGRESSION",
+          "normalized_config": {
+            "C": 1.0,
+            "class_weight": "balanced",
+            "max_iter": 1000,
+            "solver": "liblinear"
+          },
+          "status": "SUCCEEDED",
+          "trial_number": 0
+        },
+        "phase": "TRAIN",
+        "run_id": "run_000000000001",
+        "run_revision": 2,
+        "schema_version": "1.0",
+        "state": "FINAL",
+        "summary": {
+          "code": "TRIAL_EVALUATED",
+          "message": "LOGISTIC_REGRESSION finished development-only evaluation.",
+          "severity": "INFO"
+        },
+        "supersedes": null,
+        "type": "TRIAL_RESULT"
+      },
+      {
+        "artifact_refs": [],
+        "created_at": "2026-08-02T06:29:42.691350Z",
+        "created_seq": 11,
+        "lineage": {
+          "dataset_version_id": "dsv_000000000001",
+          "evidence_refs": [],
+          "method_version": "tabular-sklearn.v1",
+          "parent_refs": [],
+          "policy_version": "policy.m2-local",
+          "split_manifest_output_id": "out_000000000003",
+          "task_spec_output_id": "out_000000000002"
+        },
+        "output_id": "out_000000000006",
+        "payload": {
+          "backend_id": "sklearn",
+          "compute_credits": 0.0,
+          "engine_version": "tabular-sklearn.v1",
+          "experiment_id": "exp_run_000000000001",
+          "failure_code": null,
+          "kind": "TRIAL_RESULT",
+          "metrics": [
+            {
+              "confidence_interval": null,
+              "direction": "MAXIMIZE",
+              "name": "roc_auc",
+              "value": 0.754187292662852
+            }
+          ],
+          "model_family": "RANDOM_FOREST_CLASSIFIER",
+          "normalized_config": {
+            "class_weight": "balanced_subsample",
+            "min_samples_leaf": 2,
+            "n_estimators": 64,
+            "n_jobs": 1
+          },
+          "status": "SUCCEEDED",
+          "trial_number": 1
+        },
+        "phase": "TRAIN",
+        "run_id": "run_000000000001",
+        "run_revision": 2,
+        "schema_version": "1.0",
+        "state": "FINAL",
+        "summary": {
+          "code": "TRIAL_EVALUATED",
+          "message": "RANDOM_FOREST_CLASSIFIER finished development-only evaluation.",
+          "severity": "INFO"
+        },
+        "supersedes": null,
+        "type": "TRIAL_RESULT"
+      },
+      {
+        "artifact_refs": [
+          {
+            "artifact_id": "art_000000000002",
+            "href": "/v1/artifacts/art_000000000002",
+            "kind": "EVALUATION_METRIC_COMPARISON_PNG",
+            "media_type": "image/png",
+            "sha256": "4d2021df035ac8cd6bf3d08c25ef897c1442f637493aee527b9efd3e25209756",
+            "size_bytes": 33872
+          },
+          {
+            "artifact_id": "art_000000000003",
+            "href": "/v1/artifacts/art_000000000003",
+            "kind": "EVALUATION_ROC_CURVE_PNG",
+            "media_type": "image/png",
+            "sha256": "a0eeddafd30dca7d795bd9f9c8da6ef4a8affe0d3bee3da8eac408f386bab345",
+            "size_bytes": 31928
+          },
+          {
+            "artifact_id": "art_000000000004",
+            "href": "/v1/artifacts/art_000000000004",
+            "kind": "EVALUATION_PRECISION_RECALL_CURVE_PNG",
+            "media_type": "image/png",
+            "sha256": "623323f164966d537814076b9dbebac8dc49fefebbaa2ad09a620ae5986c6d7f",
+            "size_bytes": 23391
+          },
+          {
+            "artifact_id": "art_000000000005",
+            "href": "/v1/artifacts/art_000000000005",
+            "kind": "EVALUATION_CALIBRATION_CURVE_PNG",
+            "media_type": "image/png",
+            "sha256": "463a000bbd8b2aff1c47174c8290f376fe4f0aabbe937d7b9b65afb7db47c750",
+            "size_bytes": 46841
+          },
+          {
+            "artifact_id": "art_000000000006",
+            "href": "/v1/artifacts/art_000000000006",
+            "kind": "EVALUATION_CONFUSION_MATRIX_PNG",
+            "media_type": "image/png",
+            "sha256": "a94b357388f459e31b40a4da083ab8c6f7dcdba2088f3b9d2383f70e2a07f671",
+            "size_bytes": 25083
+          }
+        ],
+        "created_at": "2026-08-02T06:29:43.231105Z",
+        "created_seq": 14,
+        "lineage": {
+          "dataset_version_id": "dsv_000000000001",
+          "evidence_refs": [],
+          "method_version": "tabular-sklearn.v1",
+          "parent_refs": [],
+          "policy_version": "policy.m2-local",
+          "split_manifest_output_id": "out_000000000003",
+          "task_spec_output_id": "out_000000000002"
+        },
+        "output_id": "out_000000000007",
+        "payload": {
+          "baseline": {
+            "confidence_interval": null,
+            "direction": "MAXIMIZE",
+            "name": "roc_auc",
+            "value": 0.5
+          },
+          "candidate": {
+            "confidence_interval": null,
+            "direction": "MAXIMIZE",
+            "name": "roc_auc",
+            "value": 0.791871921182266
+          },
+          "eligible_candidate": false,
+          "failed_gates": [
+            "PRODUCTION_ELIGIBILITY_NOT_EVALUATED"
+          ],
+          "guardrails_passed": false,
+          "kind": "EVALUATION_REPORT",
+          "limitations": [
+            "This slice assumes one i.i.d. table.",
+            "No production eligibility or deployment approval was evaluated."
+          ],
+          "paired_delta": {
+            "confidence_interval": null,
+            "direction": "MAXIMIZE",
+            "name": "roc_auc",
+            "value": 0.291871921182266
+          },
+          "primary_metric": "roc_auc",
+          "visualization_status": "COMPLETE",
+          "visualizations": [
+            {
+              "aggregate_only": true,
+              "artifact_id": "art_000000000002",
+              "chart_type": "METRIC_COMPARISON",
+              "contains_raw_rows": false,
+              "failure_code": null,
+              "media_type": "image/png",
+              "sample_count": 72,
+              "sha256": "4d2021df035ac8cd6bf3d08c25ef897c1442f637493aee527b9efd3e25209756",
+              "size_bytes": 33872,
+              "source_partition": "SEALED_HOLDOUT",
+              "status": "GENERATED"
+            },
+            {
+              "aggregate_only": true,
+              "artifact_id": "art_000000000003",
+              "chart_type": "ROC_CURVE",
+              "contains_raw_rows": false,
+              "failure_code": null,
+              "media_type": "image/png",
+              "sample_count": 72,
+              "sha256": "a0eeddafd30dca7d795bd9f9c8da6ef4a8affe0d3bee3da8eac408f386bab345",
+              "size_bytes": 31928,
+              "source_partition": "SEALED_HOLDOUT",
+              "status": "GENERATED"
+            },
+            {
+              "aggregate_only": true,
+              "artifact_id": "art_000000000004",
+              "chart_type": "PRECISION_RECALL_CURVE",
+              "contains_raw_rows": false,
+              "failure_code": null,
+              "media_type": "image/png",
+              "sample_count": 72,
+              "sha256": "623323f164966d537814076b9dbebac8dc49fefebbaa2ad09a620ae5986c6d7f",
+              "size_bytes": 23391,
+              "source_partition": "SEALED_HOLDOUT",
+              "status": "GENERATED"
+            },
+            {
+              "aggregate_only": true,
+              "artifact_id": "art_000000000005",
+              "chart_type": "CALIBRATION_CURVE",
+              "contains_raw_rows": false,
+              "failure_code": null,
+              "media_type": "image/png",
+              "sample_count": 72,
+              "sha256": "463a000bbd8b2aff1c47174c8290f376fe4f0aabbe937d7b9b65afb7db47c750",
+              "size_bytes": 46841,
+              "source_partition": "SEALED_HOLDOUT",
+              "status": "GENERATED"
+            },
+            {
+              "aggregate_only": true,
+              "artifact_id": "art_000000000006",
+              "chart_type": "CONFUSION_MATRIX",
+              "contains_raw_rows": false,
+              "failure_code": null,
+              "media_type": "image/png",
+              "sample_count": 72,
+              "sha256": "a94b357388f459e31b40a4da083ab8c6f7dcdba2088f3b9d2383f70e2a07f671",
+              "size_bytes": 25083,
+              "source_partition": "SEALED_HOLDOUT",
+              "status": "GENERATED"
+            }
+          ]
+        },
+        "phase": "EVALUATE",
+        "run_id": "run_000000000001",
+        "run_revision": 2,
+        "schema_version": "1.0",
+        "state": "FINAL",
+        "summary": {
+          "code": "CANDIDATE_EVALUATED",
+          "message": "The frozen candidate was evaluated once on the sealed holdout.",
+          "severity": "INFO"
+        },
+        "supersedes": null,
+        "type": "EVALUATION_REPORT"
+      },
+      {
+        "artifact_refs": [
+          {
+            "artifact_id": "art_000000000007",
+            "href": "/v1/artifacts/art_000000000007",
+            "kind": "SKLEARN_JOBLIB",
+            "media_type": "application/octet-stream",
+            "sha256": "5255ba116e3aa82b8112375b8139faf8c8b372db6f6480c289de63b629ccdc1f",
+            "size_bytes": 2286
+          }
+        ],
+        "created_at": "2026-08-02T06:29:43.260793Z",
+        "created_seq": 17,
+        "lineage": {
+          "dataset_version_id": "dsv_000000000001",
+          "evidence_refs": [
+            "out_000000000007"
+          ],
+          "method_version": "tabular-sklearn.v1",
+          "parent_refs": [],
+          "policy_version": "policy.m2-local",
+          "split_manifest_output_id": "out_000000000003",
+          "task_spec_output_id": "out_000000000002"
+        },
+        "output_id": "out_000000000008",
+        "payload": {
+          "backend_id": "sklearn",
+          "backend_version": "1.7.2",
+          "engine_version": "tabular-sklearn.v1",
+          "intended_use": "Offline evaluation only; production use is not approved.",
+          "kind": "MODEL_CARD",
+          "limitations": [
+            "This slice assumes one i.i.d. table.",
+            "No production eligibility or deployment approval was evaluated."
+          ],
+          "metrics": [
+            {
+              "confidence_interval": null,
+              "direction": "MAXIMIZE",
+              "name": "roc_auc",
+              "value": 0.791871921182266
+            }
+          ],
+          "model_id": "mdl_000000000001"
+        },
+        "phase": "PACKAGE",
+        "run_id": "run_000000000001",
+        "run_revision": 2,
+        "schema_version": "1.0",
+        "state": "FINAL",
+        "summary": {
+          "code": "EVALUATED_MODEL_PACKAGED",
+          "message": "A trusted-store evaluated model package is available.",
+          "severity": "WARNING"
+        },
+        "supersedes": null,
+        "type": "MODEL_CARD"
+      },
+      {
+        "artifact_refs": [
+          {
+            "artifact_id": "art_000000000008",
+            "href": "/v1/artifacts/art_000000000008",
+            "kind": "RUN_REPORT_JSON",
+            "media_type": "application/json",
+            "sha256": "9efa171107b5ebb67fbc258ceb2e7916fc8b89bde954a333b023704da0bbe1eb",
+            "size_bytes": 42970
+          }
+        ],
+        "created_at": "2026-08-02T06:29:43.276188Z",
+        "created_seq": 18,
+        "lineage": {
+          "dataset_version_id": "dsv_000000000001",
+          "evidence_refs": [
+            "out_000000000007"
+          ],
+          "method_version": "tabular-sklearn.v1",
+          "parent_refs": [],
+          "policy_version": "policy.m2-local",
+          "split_manifest_output_id": "out_000000000003",
+          "task_spec_output_id": "out_000000000002"
+        },
+        "output_id": "out_000000000009",
+        "payload": {
+          "evidence_refs": [
+            "out_000000000002",
+            "out_000000000003",
+            "out_000000000007",
+            "out_000000000008"
+          ],
+          "kind": "RUN_REPORT",
+          "recommendation": "Review limitations and define production quality gates.",
+          "summary": "A deterministic evaluated candidate and evidence bundle were produced."
+        },
+        "phase": "PACKAGE",
+        "run_id": "run_000000000001",
+        "run_revision": 2,
+        "schema_version": "1.0",
+        "state": "FINAL",
+        "summary": {
+          "code": "REAL_RUN_COMPLETE",
+          "message": "Real data was evaluated by the bounded tabular engine.",
+          "severity": "INFO"
+        },
+        "supersedes": null,
+        "type": "RUN_REPORT"
+      }
+    ],
+    "page": {
+      "has_more": false,
+      "high_watermark": 20,
+      "next_cursor": null
+    }
+  },
+  "headers": {
+    "content-length": "12681",
+    "content-type": "application/json"
+  },
+  "status_code": 200
+}

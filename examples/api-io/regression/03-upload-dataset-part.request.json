@@ -1,0 +1,17 @@
+{
+  "body": {
+    "file": "../../data/regression_360.csv",
+    "media_type": "text/csv",
+    "sha256": "1f475d0153648dbb0ce0029c22abbef2c5128081120b330919d2070d13b720c8",
+    "size_bytes": 16052
+  },
+  "headers": {
+    "Authorization": "Bearer <AUTOML_TOKEN>",
+    "Content-Length": "16052",
+    "Content-Type": "text/csv",
+    "x-automl-upload-part": "1"
+  },
+  "method": "PUT",
+  "path": "http://127.0.0.1:18766/v1/dataset-versions/dsv_000000000002/upload-parts/1?upload_id=upload_000000000002",
+  "query": {}
+}

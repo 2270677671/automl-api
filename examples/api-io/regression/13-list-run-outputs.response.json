@@ -1,0 +1,550 @@
+{
+  "body": {
+    "items": [
+      {
+        "artifact_refs": [],
+        "created_at": "2026-08-02T06:29:43.814411Z",
+        "created_seq": 3,
+        "lineage": {
+          "dataset_version_id": "dsv_000000000002",
+          "evidence_refs": [],
+          "method_version": "tabular-sklearn.v1",
+          "parent_refs": [],
+          "policy_version": "policy.m2-local",
+          "split_manifest_output_id": null,
+          "task_spec_output_id": null
+        },
+        "output_id": "out_000000000010",
+        "payload": {
+          "column_count": 9,
+          "issues": [],
+          "kind": "DATA_QUALITY_REPORT",
+          "quality_score": 100.0,
+          "row_count": 360
+        },
+        "phase": "PROFILE",
+        "run_id": "run_000000000002",
+        "run_revision": 1,
+        "schema_version": "1.0",
+        "state": "FINAL",
+        "summary": {
+          "code": "PRE_SPLIT_PROFILE_READY",
+          "message": "Dataset structure was parsed without exposing row values.",
+          "severity": "INFO"
+        },
+        "supersedes": null,
+        "type": "DATA_QUALITY_REPORT"
+      },
+      {
+        "artifact_refs": [],
+        "created_at": "2026-08-02T06:29:43.849406Z",
+        "created_seq": 5,
+        "lineage": {
+          "dataset_version_id": "dsv_000000000002",
+          "evidence_refs": [],
+          "method_version": "tabular-sklearn.v1",
+          "parent_refs": [],
+          "policy_version": "policy.m2-local",
+          "split_manifest_output_id": null,
+          "task_spec_output_id": null
+        },
+        "output_id": "out_000000000011",
+        "payload": {
+          "assumptions": [
+            "Rows were explicitly confirmed as i.i.d."
+          ],
+          "backend_id": "sklearn",
+          "confidence": 1.0,
+          "confirmed_by": "USER",
+          "engine_version": "tabular-sklearn.v1",
+          "guardrail_metrics": [],
+          "kind": "TASK_SPEC",
+          "positive_class": null,
+          "primary_metric": "rmse",
+          "split_strategy": "RANDOM_HOLDOUT",
+          "target_column_id": "monthly_rent",
+          "task_type": "REGRESSION"
+        },
+        "phase": "PLAN",
+        "run_id": "run_000000000002",
+        "run_revision": 2,
+        "schema_version": "1.0",
+        "state": "FINAL",
+        "summary": {
+          "code": "TASK_SPEC_CONFIRMED",
+          "message": "The bounded tabular task specification is frozen.",
+          "severity": "INFO"
+        },
+        "supersedes": null,
+        "type": "TASK_SPEC"
+      },
+      {
+        "artifact_refs": [
+          {
+            "artifact_id": "art_000000000009",
+            "href": "/v1/artifacts/art_000000000009",
+            "kind": "SPLIT_MANIFEST_JSON",
+            "media_type": "application/json",
+            "sha256": "367b1d645748e2cbc5b7dfb779718fe3f2806861dabc8f0561c9879eb2322c11",
+            "size_bytes": 33966
+          }
+        ],
+        "created_at": "2026-08-02T06:29:43.871568Z",
+        "created_seq": 6,
+        "lineage": {
+          "dataset_version_id": "dsv_000000000002",
+          "evidence_refs": [],
+          "method_version": "tabular-sklearn.v1",
+          "parent_refs": [],
+          "policy_version": "policy.m2-local",
+          "split_manifest_output_id": null,
+          "task_spec_output_id": "out_000000000011"
+        },
+        "output_id": "out_000000000012",
+        "payload": {
+          "kind": "SPLIT_MANIFEST",
+          "leakage_checks": [
+            {
+              "code": "EXACT_DUPLICATES_GROUPED",
+              "evidence_refs": [],
+              "message": "Exact duplicate usable feature rows were assigned as one group.",
+              "remediation": null,
+              "severity": "INFO"
+            },
+            {
+              "code": "FINAL_HOLDOUT_SEALED",
+              "evidence_refs": [],
+              "message": "The final holdout was unavailable to cross-validation and selection.",
+              "remediation": null,
+              "severity": "INFO"
+            }
+          ],
+          "strategy": "GROUP_HOLDOUT",
+          "test_rows": 72,
+          "train_rows": 288,
+          "validation_rows": 0
+        },
+        "phase": "PLAN",
+        "run_id": "run_000000000002",
+        "run_revision": 2,
+        "schema_version": "1.0",
+        "state": "FINAL",
+        "summary": {
+          "code": "SPLIT_FROZEN",
+          "message": "The development folds and sealed holdout are immutable.",
+          "severity": "INFO"
+        },
+        "supersedes": null,
+        "type": "SPLIT_MANIFEST"
+      },
+      {
+        "artifact_refs": [],
+        "created_at": "2026-08-02T06:29:44.090852Z",
+        "created_seq": 9,
+        "lineage": {
+          "dataset_version_id": "dsv_000000000002",
+          "evidence_refs": [],
+          "method_version": "tabular-sklearn.v1",
+          "parent_refs": [],
+          "policy_version": "policy.m2-local",
+          "split_manifest_output_id": "out_000000000012",
+          "task_spec_output_id": "out_000000000011"
+        },
+        "output_id": "out_000000000013",
+        "payload": {
+          "baselines": [
+            {
+              "compute_credits": 0.0,
+              "metrics": [
+                {
+                  "confidence_interval": null,
+                  "direction": "MINIMIZE",
+                  "name": "rmse",
+                  "value": 1883.5884345698778
+                }
+              ],
+              "name": "DUMMY_REGRESSOR"
+            }
+          ],
+          "kind": "BASELINE_RESULT"
+        },
+        "phase": "TRAIN",
+        "run_id": "run_000000000002",
+        "run_revision": 2,
+        "schema_version": "1.0",
+        "state": "FINAL",
+        "summary": {
+          "code": "BASELINE_EVALUATED",
+          "message": "The naive baseline was evaluated on development folds.",
+          "severity": "INFO"
+        },
+        "supersedes": null,
+        "type": "BASELINE_RESULT"
+      },
+      {
+        "artifact_refs": [],
+        "created_at": "2026-08-02T06:29:44.106417Z",
+        "created_seq": 10,
+        "lineage": {
+          "dataset_version_id": "dsv_000000000002",
+          "evidence_refs": [],
+          "method_version": "tabular-sklearn.v1",
+          "parent_refs": [],
+          "policy_version": "policy.m2-local",
+          "split_manifest_output_id": "out_000000000012",
+          "task_spec_output_id": "out_000000000011"
+        },
+        "output_id": "out_000000000014",
+        "payload": {
+          "backend_id": "sklearn",
+          "compute_credits": 0.0,
+          "engine_version": "tabular-sklearn.v1",
+          "experiment_id": "exp_run_000000000002",
+          "failure_code": null,
+          "kind": "TRIAL_RESULT",
+          "metrics": [
+            {
+              "confidence_interval": null,
+              "direction": "MINIMIZE",
+              "name": "rmse",
+              "value": 258.9082563753393
+            }
+          ],
+          "model_family": "RIDGE",
+          "normalized_config": {
+            "alpha": 1.0,
+            "solver": "lsqr"
+          },
+          "status": "SUCCEEDED",
+          "trial_number": 0
+        },
+        "phase": "TRAIN",
+        "run_id": "run_000000000002",
+        "run_revision": 2,
+        "schema_version": "1.0",
+        "state": "FINAL",
+        "summary": {
+          "code": "TRIAL_EVALUATED",
+          "message": "RIDGE finished development-only evaluation.",
+          "severity": "INFO"
+        },
+        "supersedes": null,
+        "type": "TRIAL_RESULT"
+      },
+      {
+        "artifact_refs": [],
+        "created_at": "2026-08-02T06:29:44.122627Z",
+        "created_seq": 11,
+        "lineage": {
+          "dataset_version_id": "dsv_000000000002",
+          "evidence_refs": [],
+          "method_version": "tabular-sklearn.v1",
+          "parent_refs": [],
+          "policy_version": "policy.m2-local",
+          "split_manifest_output_id": "out_000000000012",
+          "task_spec_output_id": "out_000000000011"
+        },
+        "output_id": "out_000000000015",
+        "payload": {
+          "backend_id": "sklearn",
+          "compute_credits": 0.0,
+          "engine_version": "tabular-sklearn.v1",
+          "experiment_id": "exp_run_000000000002",
+          "failure_code": null,
+          "kind": "TRIAL_RESULT",
+          "metrics": [
+            {
+              "confidence_interval": null,
+              "direction": "MINIMIZE",
+              "name": "rmse",
+              "value": 590.2681950201363
+            }
+          ],
+          "model_family": "RANDOM_FOREST_REGRESSOR",
+          "normalized_config": {
+            "min_samples_leaf": 2,
+            "n_estimators": 64,
+            "n_jobs": 1
+          },
+          "status": "SUCCEEDED",
+          "trial_number": 1
+        },
+        "phase": "TRAIN",
+        "run_id": "run_000000000002",
+        "run_revision": 2,
+        "schema_version": "1.0",
+        "state": "FINAL",
+        "summary": {
+          "code": "TRIAL_EVALUATED",
+          "message": "RANDOM_FOREST_REGRESSOR finished development-only evaluation.",
+          "severity": "INFO"
+        },
+        "supersedes": null,
+        "type": "TRIAL_RESULT"
+      },
+      {
+        "artifact_refs": [
+          {
+            "artifact_id": "art_000000000010",
+            "href": "/v1/artifacts/art_000000000010",
+            "kind": "EVALUATION_METRIC_COMPARISON_PNG",
+            "media_type": "image/png",
+            "sha256": "044fb3c085a3e04d90271ab61f019777282fba3ed73caa4094dd70997e52a526",
+            "size_bytes": 27011
+          },
+          {
+            "artifact_id": "art_000000000011",
+            "href": "/v1/artifacts/art_000000000011",
+            "kind": "EVALUATION_OBSERVED_VS_PREDICTED_PNG",
+            "media_type": "image/png",
+            "sha256": "7941e1a2eb02b88f90aa1111149b8167358dec2e3a54a7520e98fea636ed7f7f",
+            "size_bytes": 49434
+          },
+          {
+            "artifact_id": "art_000000000012",
+            "href": "/v1/artifacts/art_000000000012",
+            "kind": "EVALUATION_RESIDUALS_VS_PREDICTED_PNG",
+            "media_type": "image/png",
+            "sha256": "c021b492cf11fd9bb36754293e660ea7976198237adf4f9fdcaa15859567871b",
+            "size_bytes": 35086
+          },
+          {
+            "artifact_id": "art_000000000013",
+            "href": "/v1/artifacts/art_000000000013",
+            "kind": "EVALUATION_RESIDUAL_DISTRIBUTION_PNG",
+            "media_type": "image/png",
+            "sha256": "6f2d5eb3fb308c0f8774edd78c1e1352ebf1ba70a72c9ff5cf2eaad798b8d7b4",
+            "size_bytes": 26770
+          }
+        ],
+        "created_at": "2026-08-02T06:29:44.413298Z",
+        "created_seq": 14,
+        "lineage": {
+          "dataset_version_id": "dsv_000000000002",
+          "evidence_refs": [],
+          "method_version": "tabular-sklearn.v1",
+          "parent_refs": [],
+          "policy_version": "policy.m2-local",
+          "split_manifest_output_id": "out_000000000012",
+          "task_spec_output_id": "out_000000000011"
+        },
+        "output_id": "out_000000000016",
+        "payload": {
+          "baseline": {
+            "confidence_interval": null,
+            "direction": "MINIMIZE",
+            "name": "rmse",
+            "value": 1977.3984188652687
+          },
+          "candidate": {
+            "confidence_interval": null,
+            "direction": "MINIMIZE",
+            "name": "rmse",
+            "value": 282.179764861637
+          },
+          "eligible_candidate": false,
+          "failed_gates": [
+            "PRODUCTION_ELIGIBILITY_NOT_EVALUATED"
+          ],
+          "guardrails_passed": false,
+          "kind": "EVALUATION_REPORT",
+          "limitations": [
+            "This slice assumes one i.i.d. table.",
+            "No production eligibility or deployment approval was evaluated."
+          ],
+          "paired_delta": {
+            "confidence_interval": null,
+            "direction": "MINIMIZE",
+            "name": "rmse",
+            "value": 1695.2186540036316
+          },
+          "primary_metric": "rmse",
+          "visualization_status": "COMPLETE",
+          "visualizations": [
+            {
+              "aggregate_only": true,
+              "artifact_id": "art_000000000010",
+              "chart_type": "METRIC_COMPARISON",
+              "contains_raw_rows": false,
+              "failure_code": null,
+              "media_type": "image/png",
+              "sample_count": 72,
+              "sha256": "044fb3c085a3e04d90271ab61f019777282fba3ed73caa4094dd70997e52a526",
+              "size_bytes": 27011,
+              "source_partition": "SEALED_HOLDOUT",
+              "status": "GENERATED"
+            },
+            {
+              "aggregate_only": true,
+              "artifact_id": "art_000000000011",
+              "chart_type": "OBSERVED_VS_PREDICTED",
+              "contains_raw_rows": false,
+              "failure_code": null,
+              "media_type": "image/png",
+              "sample_count": 72,
+              "sha256": "7941e1a2eb02b88f90aa1111149b8167358dec2e3a54a7520e98fea636ed7f7f",
+              "size_bytes": 49434,
+              "source_partition": "SEALED_HOLDOUT",
+              "status": "GENERATED"
+            },
+            {
+              "aggregate_only": true,
+              "artifact_id": "art_000000000012",
+              "chart_type": "RESIDUALS_VS_PREDICTED",
+              "contains_raw_rows": false,
+              "failure_code": null,
+              "media_type": "image/png",
+              "sample_count": 72,
+              "sha256": "c021b492cf11fd9bb36754293e660ea7976198237adf4f9fdcaa15859567871b",
+              "size_bytes": 35086,
+              "source_partition": "SEALED_HOLDOUT",
+              "status": "GENERATED"
+            },
+            {
+              "aggregate_only": true,
+              "artifact_id": "art_000000000013",
+              "chart_type": "RESIDUAL_DISTRIBUTION",
+              "contains_raw_rows": false,
+              "failure_code": null,
+              "media_type": "image/png",
+              "sample_count": 72,
+              "sha256": "6f2d5eb3fb308c0f8774edd78c1e1352ebf1ba70a72c9ff5cf2eaad798b8d7b4",
+              "size_bytes": 26770,
+              "source_partition": "SEALED_HOLDOUT",
+              "status": "GENERATED"
+            }
+          ]
+        },
+        "phase": "EVALUATE",
+        "run_id": "run_000000000002",
+        "run_revision": 2,
+        "schema_version": "1.0",
+        "state": "FINAL",
+        "summary": {
+          "code": "CANDIDATE_EVALUATED",
+          "message": "The frozen candidate was evaluated once on the sealed holdout.",
+          "severity": "INFO"
+        },
+        "supersedes": null,
+        "type": "EVALUATION_REPORT"
+      },
+      {
+        "artifact_refs": [
+          {
+            "artifact_id": "art_000000000014",
+            "href": "/v1/artifacts/art_000000000014",
+            "kind": "SKLEARN_JOBLIB",
+            "media_type": "application/octet-stream",
+            "sha256": "bb62162064dd2c38db91ee9fa01113f78c70a67fe0e2cb1f1008a6a4dac23f39",
+            "size_bytes": 2171
+          }
+        ],
+        "created_at": "2026-08-02T06:29:44.475081Z",
+        "created_seq": 17,
+        "lineage": {
+          "dataset_version_id": "dsv_000000000002",
+          "evidence_refs": [
+            "out_000000000016"
+          ],
+          "method_version": "tabular-sklearn.v1",
+          "parent_refs": [],
+          "policy_version": "policy.m2-local",
+          "split_manifest_output_id": "out_000000000012",
+          "task_spec_output_id": "out_000000000011"
+        },
+        "output_id": "out_000000000017",
+        "payload": {
+          "backend_id": "sklearn",
+          "backend_version": "1.7.2",
+          "engine_version": "tabular-sklearn.v1",
+          "intended_use": "Offline evaluation only; production use is not approved.",
+          "kind": "MODEL_CARD",
+          "limitations": [
+            "This slice assumes one i.i.d. table.",
+            "No production eligibility or deployment approval was evaluated."
+          ],
+          "metrics": [
+            {
+              "confidence_interval": null,
+              "direction": "MINIMIZE",
+              "name": "rmse",
+              "value": 282.179764861637
+            }
+          ],
+          "model_id": "mdl_000000000002"
+        },
+        "phase": "PACKAGE",
+        "run_id": "run_000000000002",
+        "run_revision": 2,
+        "schema_version": "1.0",
+        "state": "FINAL",
+        "summary": {
+          "code": "EVALUATED_MODEL_PACKAGED",
+          "message": "A trusted-store evaluated model package is available.",
+          "severity": "WARNING"
+        },
+        "supersedes": null,
+        "type": "MODEL_CARD"
+      },
+      {
+        "artifact_refs": [
+          {
+            "artifact_id": "art_000000000015",
+            "href": "/v1/artifacts/art_000000000015",
+            "kind": "RUN_REPORT_JSON",
+            "media_type": "application/json",
+            "sha256": "64453a6e0f9d08fea1e0a2f7e8d5e77b5ceec3fc5e0a317e5b52a462715a9ea0",
+            "size_bytes": 41633
+          }
+        ],
+        "created_at": "2026-08-02T06:29:44.504101Z",
+        "created_seq": 18,
+        "lineage": {
+          "dataset_version_id": "dsv_000000000002",
+          "evidence_refs": [
+            "out_000000000016"
+          ],
+          "method_version": "tabular-sklearn.v1",
+          "parent_refs": [],
+          "policy_version": "policy.m2-local",
+          "split_manifest_output_id": "out_000000000012",
+          "task_spec_output_id": "out_000000000011"
+        },
+        "output_id": "out_000000000018",
+        "payload": {
+          "evidence_refs": [
+            "out_000000000011",
+            "out_000000000012",
+            "out_000000000016",
+            "out_000000000017"
+          ],
+          "kind": "RUN_REPORT",
+          "recommendation": "Review limitations and define production quality gates.",
+          "summary": "A deterministic evaluated candidate and evidence bundle were produced."
+        },
+        "phase": "PACKAGE",
+        "run_id": "run_000000000002",
+        "run_revision": 2,
+        "schema_version": "1.0",
+        "state": "FINAL",
+        "summary": {
+          "code": "REAL_RUN_COMPLETE",
+          "message": "Real data was evaluated by the bounded tabular engine.",
+          "severity": "INFO"
+        },
+        "supersedes": null,
+        "type": "RUN_REPORT"
+      }
+    ],
+    "page": {
+      "has_more": false,
+      "high_watermark": 20,
+      "next_cursor": null
+    }
+  },
+  "headers": {
+    "content-length": "12020",
+    "content-type": "application/json"
+  },
+  "status_code": 200
+}

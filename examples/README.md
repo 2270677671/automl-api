@@ -11,9 +11,18 @@ Agent token 和 Human token。
 | `python/sdk_guided_workflow.py` | 使用官方 Python SDK 完成上传、中断、回答、结果和 artifact |
 | `python/http_guided_workflow.py` | 只使用 HTTP 客户端逐步调用原始 API 路由 |
 | `python/webhook_receiver.py` | 验证 raw-body HMAC、300 秒重放窗口和 delivery ID 的 callback receiver |
+| `python/sdk_classification_regression.py` | 运行 360 条数据的二分类或回归完整案例 |
+| `python/generate_classification_regression_data.py` | 使用固定随机种子重新生成两套 360 条合成数据 |
+| `python/record_classification_regression_api_io.py` | 真实调用 API 并重新录制两个案例的逐接口输入输出 |
+| `api-io/classification/` | 二分类案例的 18 组请求/响应 JSON 和下载图片 |
+| `api-io/regression/` | 回归案例的 18 组请求/响应 JSON 和下载图片 |
 | `data/customer_churn.csv` | 合成二分类数据，不含真实个人信息 |
 | `data/regression.csv` | 合成回归数据 |
+| `data/classification_360.csv` | 360 条客户流失二分类数据，目标列为 `churned` |
+| `data/regression_360.csv` | 360 条月租金回归数据，目标列为 `monthly_rent` |
 | `requests/sklearn-guided.json` | sklearn 人工确认案例请求体 |
+| `requests/sklearn-classification-360.json` | 360 条二分类案例的完整 Run 请求体 |
+| `requests/sklearn-regression-360.json` | 360 条回归案例的完整 Run 请求体 |
 | `requests/autogluon-binary.json` | AutoGluon 二分类请求体 |
 | `requests/tabpfn-regression.json` | TabPFN 回归请求体 |
 
@@ -63,7 +72,35 @@ uv run python examples/python/http_guided_workflow.py \
 本地开发 profile 以 token 哈希作为合成 tenant，因此 Agent 和 Human 应使用同一个 token。输出写入
 `example-output/`。
 
-## 3. 生产 HTTPS 案例
+## 3. 分类与回归 360 条数据案例
+
+二分类：
+
+```bash
+AUTOML_API_URL=http://127.0.0.1:8000 \
+AUTOML_TOKEN=local-development-token \
+PYTHONPATH=packages/python_sdk/src \
+uv run python examples/python/sdk_classification_regression.py classification
+```
+
+回归：
+
+```bash
+AUTOML_API_URL=http://127.0.0.1:8000 \
+AUTOML_TOKEN=local-development-token \
+PYTHONPATH=packages/python_sdk/src \
+uv run python examples/python/sdk_classification_regression.py regression
+```
+
+两套数据各 360 条，案例会上传数据、创建 Run、等待完成、读取评估指标并下载结果图片。字段说明、
+参考指标、Callback 接入和重新生成方式见
+[分类与回归完整案例](classification-regression.md)。
+
+每一步实际 HTTP 请求与响应已分别写入 `api-io/classification/` 和
+`api-io/regression/`。每个目录的 `index.json` 是调用顺序索引；文件名中的同一序号分别为
+`*.request.json` 和 `*.response.json`。
+
+## 4. 生产 HTTPS 案例
 
 生产 Agent token 应通过 OAuth2 `client_credentials` 自动获取，而不是等待人工发放。验证身份链路：
 
@@ -95,7 +132,7 @@ uv run python examples/python/sdk_guided_workflow.py
 自动取 token 见 [OIDC 接入手册](../docs/oidc-client-credentials.md)，Human token 规则见
 [完整复现指南](../docs/reproduction-guide.md#63-获取最小权限凭据)。
 
-## 4. 切换后端
+## 5. 切换后端
 
 先读取 manifest，只有后端 `available=true` 才运行：
 
@@ -109,7 +146,7 @@ uv run python examples/python/sdk_guided_workflow.py --backend autogluon
 TabPFN 需要部署方已接受许可并配置批准的权重。脚本不会代替部署方接受许可，也不会自动向 Git 提交
 模型 token。
 
-## 5. JSON 请求体
+## 6. JSON 请求体
 
 `requests/*.json` 中的 `dsv_REPLACE_ME` 必须替换成实际 `DatasetVersion` ID。例如：
 
@@ -126,7 +163,7 @@ curl -sS -X POST "$AUTOML_API_URL/v1/runs" \
 
 逐路由 curl 示例见[API 路由使用手册](../docs/api-route-reference.md)。
 
-## 6. 启动 callback receiver
+## 7. 启动 callback receiver
 
 先创建 Webhook endpoint，再把创建响应中仅返回一次的 `signing_secret` 注入接收端：
 

@@ -1,0 +1,317 @@
+{
+  "body": {
+    "actions_path_template": "/v1/runs/{run_id}/agent-actions",
+    "active_operation_ids": [
+      "getAgentInterfaceManifest",
+      "getAgentRunContext",
+      "listAgentRunActions",
+      "createDatasetUpload",
+      "signDatasetUploadParts",
+      "finalizeDatasetUpload",
+      "getDatasetVersion",
+      "createRun",
+      "getRun",
+      "readRunEvents",
+      "listRunOutputs",
+      "getRunOutput",
+      "listDecisionPackets",
+      "answerDecisionPacket",
+      "pauseRun",
+      "resumeRun",
+      "cancelRun",
+      "getCommand",
+      "getRunResult",
+      "getArtifact",
+      "createArtifactDownloadTicket",
+      "createWebhookEndpoint",
+      "listWebhookEndpoints",
+      "getWebhookEndpoint",
+      "deleteWebhookEndpoint",
+      "rotateWebhookEndpointSecret",
+      "enableWebhookEndpoint",
+      "listWebhookDeliveries",
+      "getWebhookDelivery",
+      "redeliverWebhookDelivery"
+    ],
+    "agent_tools_openapi_href": "/v1/agent/tool-openapi.yaml",
+    "agent_tools_openapi_sha256": "aebb2cc14bda990608f45b39606b097052c7dfa871cb274b50fb4978ba41f21d",
+    "api_version": "v1",
+    "backends": [
+      {
+        "artifact": {
+          "kind": "AUTOGLUON_PREDICTOR_TAR_GZ",
+          "media_type": "application/gzip",
+          "serialization": "autogluon_predictor_tar_gz"
+        },
+        "available": true,
+        "backend_id": "autogluon",
+        "backend_version": "1.5.0",
+        "capabilities": {
+          "limits": {
+            "default_num_cpus": 1,
+            "default_num_gpus": 0,
+            "default_time_limit_seconds": 20,
+            "max_configured_time_limit_seconds": 3600
+          },
+          "media_types": [
+            "text/csv",
+            "application/vnd.apache.parquet"
+          ],
+          "required_attributions": [],
+          "runtime_requirements": [
+            "Bounded by RunBudget.max_wall_time_seconds with packaging reserve",
+            "Writable AUTOML_BACKEND_WORK_DIR for predictor directories",
+            "Default portfolio uses RF, XT, and LR without native booster add-ons"
+          ],
+          "supports_categorical_features": true,
+          "supports_cpu": true,
+          "supports_cross_validation": false,
+          "supports_gpu": false,
+          "supports_missing_values": true,
+          "supports_probability_predictions": true,
+          "supports_sealed_holdout": true,
+          "task_types": [
+            "BINARY_CLASSIFICATION",
+            "REGRESSION"
+          ]
+        },
+        "deterministic": false,
+        "display_name": "AutoGluon Tabular bounded model selection",
+        "engine_version": "tabular-autogluon.v1",
+        "installed": true,
+        "optional_dependency": null,
+        "production_eligible": false,
+        "status": "AVAILABLE",
+        "unavailable_reason": null
+      },
+      {
+        "artifact": {
+          "kind": "SKLEARN_JOBLIB",
+          "media_type": "application/octet-stream",
+          "serialization": "joblib"
+        },
+        "available": true,
+        "backend_id": "sklearn",
+        "backend_version": "1.7.2",
+        "capabilities": {
+          "limits": {},
+          "media_types": [
+            "text/csv",
+            "application/vnd.apache.parquet"
+          ],
+          "required_attributions": [],
+          "runtime_requirements": [],
+          "supports_categorical_features": true,
+          "supports_cpu": true,
+          "supports_cross_validation": true,
+          "supports_gpu": false,
+          "supports_missing_values": true,
+          "supports_probability_predictions": true,
+          "supports_sealed_holdout": true,
+          "task_types": [
+            "BINARY_CLASSIFICATION",
+            "REGRESSION"
+          ]
+        },
+        "deterministic": true,
+        "display_name": "scikit-learn bounded search",
+        "engine_version": "tabular-sklearn.v1",
+        "installed": true,
+        "optional_dependency": null,
+        "production_eligible": false,
+        "status": "AVAILABLE",
+        "unavailable_reason": null
+      },
+      {
+        "artifact": {
+          "kind": "TABPFN_EVALUATION_METADATA",
+          "media_type": "application/json",
+          "serialization": "json"
+        },
+        "available": false,
+        "backend_id": "tabpfn",
+        "backend_version": "8.1.0",
+        "capabilities": {
+          "limits": {
+            "max_cpu_rows": 1000,
+            "max_features": 2000,
+            "max_gpu_rows": 100000
+          },
+          "media_types": [
+            "text/csv",
+            "application/vnd.apache.parquet"
+          ],
+          "required_attributions": [
+            "Built with PriorLabs-TabPFN"
+          ],
+          "runtime_requirements": [
+            "Operator acceptance of the selected TabPFN model-weight license",
+            "public-v2 cache, TABPFN_TOKEN, or configured checkpoint paths",
+            "Writable model cache; only data-free evaluation metadata is downloadable",
+            "GPU recommended; CPU execution is limited to small datasets",
+            "Wall-time deadline is cooperative between folds, not a hard fit interruption"
+          ],
+          "supports_categorical_features": true,
+          "supports_cpu": true,
+          "supports_cross_validation": true,
+          "supports_gpu": true,
+          "supports_missing_values": true,
+          "supports_probability_predictions": true,
+          "supports_sealed_holdout": true,
+          "task_types": [
+            "BINARY_CLASSIFICATION",
+            "REGRESSION"
+          ]
+        },
+        "deterministic": false,
+        "display_name": "TabPFN local small-data backend",
+        "engine_version": "tabular-tabpfn.v1",
+        "installed": true,
+        "optional_dependency": null,
+        "production_eligible": false,
+        "status": "UNAVAILABLE",
+        "unavailable_reason": "MODEL_LICENSE_NOT_ACCEPTED"
+      }
+    ],
+    "canonical_openapi_href": "/openapi.yaml",
+    "canonical_operation_ids": [
+      "getAgentInterfaceManifest",
+      "getAgentRunContext",
+      "listAgentRunActions",
+      "createDatasetUpload",
+      "signDatasetUploadParts",
+      "finalizeDatasetUpload",
+      "getDatasetVersion",
+      "createRun",
+      "listRuns",
+      "getRun",
+      "listRunStages",
+      "readRunEvents",
+      "listRunOutputs",
+      "getRunOutput",
+      "listRunExperiments",
+      "getRunExperiment",
+      "listDecisionPackets",
+      "answerDecisionPacket",
+      "listRunApprovals",
+      "decideApproval",
+      "pauseRun",
+      "resumeRun",
+      "cancelRun",
+      "getCommand",
+      "getRunResult",
+      "getArtifact",
+      "createArtifactDownloadTicket",
+      "getModelCandidate",
+      "createWebhookEndpoint",
+      "listWebhookEndpoints",
+      "getWebhookEndpoint",
+      "deleteWebhookEndpoint",
+      "rotateWebhookEndpointSecret",
+      "enableWebhookEndpoint",
+      "listWebhookDeliveries",
+      "getWebhookDelivery",
+      "redeliverWebhookDelivery",
+      "deleteDataset",
+      "getDeletionJob"
+    ],
+    "context_path_template": "/v1/runs/{run_id}/agent-context",
+    "credentials_must_remain_in_platform": true,
+    "default_backend_id": "sklearn",
+    "internal_llm_calls": false,
+    "llm_budget_owner": "EXTERNAL_AGENT_PLATFORM",
+    "max_llm_tokens_consumed": false,
+    "openapi_href": "/openapi.yaml",
+    "operation_scopes": {
+      "answerDecisionPacket": "automl:operation:answerDecisionPacket",
+      "cancelRun": "automl:operation:cancelRun",
+      "createArtifactDownloadTicket": "automl:operation:createArtifactDownloadTicket",
+      "createDatasetUpload": "automl:operation:createDatasetUpload",
+      "createRun": "automl:operation:createRun",
+      "createWebhookEndpoint": "automl:operation:createWebhookEndpoint",
+      "decideApproval": "automl:operation:decideApproval",
+      "deleteDataset": "automl:operation:deleteDataset",
+      "deleteWebhookEndpoint": "automl:operation:deleteWebhookEndpoint",
+      "enableWebhookEndpoint": "automl:operation:enableWebhookEndpoint",
+      "finalizeDatasetUpload": "automl:operation:finalizeDatasetUpload",
+      "getAgentInterfaceManifest": "automl:operation:getAgentInterfaceManifest",
+      "getAgentRunContext": "automl:operation:getAgentRunContext",
+      "getArtifact": "automl:operation:getArtifact",
+      "getCommand": "automl:operation:getCommand",
+      "getDatasetVersion": "automl:operation:getDatasetVersion",
+      "getDeletionJob": "automl:operation:getDeletionJob",
+      "getModelCandidate": "automl:operation:getModelCandidate",
+      "getRun": "automl:operation:getRun",
+      "getRunExperiment": "automl:operation:getRunExperiment",
+      "getRunOutput": "automl:operation:getRunOutput",
+      "getRunResult": "automl:operation:getRunResult",
+      "getWebhookDelivery": "automl:operation:getWebhookDelivery",
+      "getWebhookEndpoint": "automl:operation:getWebhookEndpoint",
+      "listAgentRunActions": "automl:operation:listAgentRunActions",
+      "listDecisionPackets": "automl:operation:listDecisionPackets",
+      "listRunApprovals": "automl:operation:listRunApprovals",
+      "listRunExperiments": "automl:operation:listRunExperiments",
+      "listRunOutputs": "automl:operation:listRunOutputs",
+      "listRunStages": "automl:operation:listRunStages",
+      "listRuns": "automl:operation:listRuns",
+      "listWebhookDeliveries": "automl:operation:listWebhookDeliveries",
+      "listWebhookEndpoints": "automl:operation:listWebhookEndpoints",
+      "pauseRun": "automl:operation:pauseRun",
+      "readRunEvents": "automl:operation:readRunEvents",
+      "redeliverWebhookDelivery": "automl:operation:redeliverWebhookDelivery",
+      "resumeRun": "automl:operation:resumeRun",
+      "rotateWebhookEndpointSecret": "automl:operation:rotateWebhookEndpointSecret",
+      "signDatasetUploadParts": "automl:operation:signDatasetUploadParts"
+    },
+    "planner_location": "EXTERNAL_AGENT_PLATFORM",
+    "production_external_llm_safe": false,
+    "profile_id": "local-durable-tabular-v1",
+    "python_sdk_compatible_versions": ">=0.8,<0.9",
+    "runtime_limits": {
+      "max_active_runs_per_tenant": 4,
+      "max_compute_credits": 20.0,
+      "max_dataset_bytes": 104857600,
+      "max_storage_bytes_per_tenant": 1073741824,
+      "max_trials_per_run": 20,
+      "max_upload_part_bytes": 104857600,
+      "max_wall_time_seconds": 3600
+    },
+    "schema_version": "1.0",
+    "service_role": "AUTOML_EXECUTION_BACKEND",
+    "service_version": "0.8.0",
+    "supported_capabilities": [
+      "single_table_tabular_upload",
+      "csv",
+      "parquet",
+      "binary_classification",
+      "regression",
+      "offline_evaluation",
+      "evaluation_visualizations",
+      "human_interrupt_resume",
+      "agent_allowed_recommended_answers",
+      "built_in_webhook_http_delivery"
+    ],
+    "supported_media_types": [
+      "text/csv",
+      "application/vnd.apache.parquet"
+    ],
+    "supported_task_types": [
+      "BINARY_CLASSIFICATION",
+      "REGRESSION"
+    ],
+    "unsupported_capabilities": [
+      "production_deployment",
+      "online_inference",
+      "multi_table_learning",
+      "forecasting",
+      "ranking",
+      "unbounded_hyperparameter_search",
+      "internal_llm_planning"
+    ]
+  },
+  "headers": {
+    "content-length": "8445",
+    "content-type": "application/json"
+  },
+  "status_code": 200
+}

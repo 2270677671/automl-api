@@ -1,0 +1,21 @@
+{
+  "body": {
+    "artifact_id": "art_000000000010",
+    "etag": "\"044fb3c085a3e04d90271ab61f019777282fba3ed73caa4094dd70997e52a526\"",
+    "expires_at": "2026-08-02T06:44:44.555722Z",
+    "expires_in_seconds": 900,
+    "required_headers": {
+      "If-Match": "<REDACTED>"
+    },
+    "sha256": "044fb3c085a3e04d90271ab61f019777282fba3ed73caa4094dd70997e52a526",
+    "size_bytes": 27011,
+    "supports_range": true,
+    "ticket_id": "ticket_000000000002",
+    "url": "<REDACTED_EPHEMERAL_DOWNLOAD_URL>"
+  },
+  "headers": {
+    "content-length": "830",
+    "content-type": "application/json"
+  },
+  "status_code": 201
+}

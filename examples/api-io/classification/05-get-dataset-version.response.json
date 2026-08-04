@@ -1,0 +1,20 @@
+{
+  "body": {
+    "created_at": "2026-08-02T06:29:42.210720Z",
+    "dataset_id": "ds_000000000001",
+    "dataset_version_id": "dsv_000000000001",
+    "media_type": "text/csv",
+    "revision": 2,
+    "sha256": "ff76b47ff7a1b93dde983c495c55ffb7425af7691a237d74d449f2c00e29caec",
+    "size_bytes": 12102,
+    "status": "READY",
+    "updated_at": "2026-08-02T06:29:42.219593Z",
+    "validation_issues": []
+  },
+  "headers": {
+    "content-length": "330",
+    "content-type": "application/json",
+    "etag": "\"2\""
+  },
+  "status_code": 200
+}

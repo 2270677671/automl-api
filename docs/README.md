@@ -16,6 +16,7 @@ Prompt、DLP、凭据、人机交互和工具调用策略。
 | 接收每个阶段的状态和准入结果 | [阶段 Callback 契约](stage-callback-contract.md) | [Webhook 接收端案例](../examples/python/webhook_receiver.py) |
 | 自动获取和刷新生产 token | [OIDC/OAuth2 Client Credentials](oidc-client-credentials.md) | [Python SDK](../packages/python_sdk/README.md) |
 | 运行代码案例 | [示例目录](../examples/README.md) | [Python SDK README](../packages/python_sdk/README.md) |
+| 验证分类和回归任务 | [360 条分类与回归案例](../examples/classification-regression.md) | [API 调用流程](api-usage.md) |
 | 选择 sklearn/AutoGluon/TabPFN | [后端说明](framework-backends.md) | [API 三后端案例](api-usage.md#9-三个标准后端案例) |
 | 生产交付和安全评审 | [生产交付方案](production-delivery.md) | [0.8.0 测试报告](test-report-0.8.0.md) |
 

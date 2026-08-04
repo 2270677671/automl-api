@@ -1,0 +1,9 @@
+{
+  "body": null,
+  "headers": {
+    "Authorization": "Bearer <AUTOML_TOKEN>"
+  },
+  "method": "GET",
+  "path": "/v1/runs/run_000000000001/agent-actions",
+  "query": {}
+}

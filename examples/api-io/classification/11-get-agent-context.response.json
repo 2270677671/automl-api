@@ -1,0 +1,221 @@
+{
+  "body": {
+    "actions_href": "/v1/runs/run_000000000001/agent-actions",
+    "contains_raw_dataset_rows": false,
+    "dataset_derived_text_trust": "UNTRUSTED",
+    "event_checkpoint": {
+      "after_seq": 20,
+      "events_href": "/v1/runs/run_000000000001/events"
+    },
+    "links": {
+      "events": "/v1/runs/run_000000000001/events",
+      "outputs": "/v1/runs/run_000000000001/outputs",
+      "result": "/v1/runs/run_000000000001/result",
+      "run": "/v1/runs/run_000000000001"
+    },
+    "may_include_dataset_derived_values": true,
+    "objective": {
+      "backend_id": "sklearn",
+      "business_context": "Predict whether a subscription customer will churn.",
+      "iid_confirmed": true,
+      "positive_class": 1,
+      "primary_metric": "roc_auc",
+      "target_column": "churned",
+      "task_type": "BINARY_CLASSIFICATION"
+    },
+    "open_decision_packets": [],
+    "output_refs_truncated": false,
+    "recent_output_refs": [
+      {
+        "href": "/v1/runs/run_000000000001/outputs/out_000000000001",
+        "output_id": "out_000000000001",
+        "state": "FINAL",
+        "type": "DATA_QUALITY_REPORT"
+      },
+      {
+        "href": "/v1/runs/run_000000000001/outputs/out_000000000002",
+        "output_id": "out_000000000002",
+        "state": "FINAL",
+        "type": "TASK_SPEC"
+      },
+      {
+        "href": "/v1/runs/run_000000000001/outputs/out_000000000003",
+        "output_id": "out_000000000003",
+        "state": "FINAL",
+        "type": "SPLIT_MANIFEST"
+      },
+      {
+        "href": "/v1/runs/run_000000000001/outputs/out_000000000004",
+        "output_id": "out_000000000004",
+        "state": "FINAL",
+        "type": "BASELINE_RESULT"
+      },
+      {
+        "href": "/v1/runs/run_000000000001/outputs/out_000000000005",
+        "output_id": "out_000000000005",
+        "state": "FINAL",
+        "type": "TRIAL_RESULT"
+      },
+      {
+        "href": "/v1/runs/run_000000000001/outputs/out_000000000006",
+        "output_id": "out_000000000006",
+        "state": "FINAL",
+        "type": "TRIAL_RESULT"
+      },
+      {
+        "href": "/v1/runs/run_000000000001/outputs/out_000000000007",
+        "output_id": "out_000000000007",
+        "state": "FINAL",
+        "type": "EVALUATION_REPORT"
+      },
+      {
+        "href": "/v1/runs/run_000000000001/outputs/out_000000000008",
+        "output_id": "out_000000000008",
+        "state": "FINAL",
+        "type": "MODEL_CARD"
+      },
+      {
+        "href": "/v1/runs/run_000000000001/outputs/out_000000000009",
+        "output_id": "out_000000000009",
+        "state": "FINAL",
+        "type": "RUN_REPORT"
+      }
+    ],
+    "result_available": true,
+    "run": {
+      "api_version": "v1",
+      "available_actions": [],
+      "blocking": {
+        "approval_ids": [],
+        "decision_packet_ids": []
+      },
+      "budget_usage": {
+        "compute_credits": {
+          "limit": 1.0,
+          "used": 0.0
+        },
+        "llm_tokens": {
+          "limit": 0.0,
+          "used": 0.0
+        },
+        "trials": {
+          "limit": 2.0,
+          "used": 2.0
+        },
+        "wall_time_seconds": {
+          "limit": 1200.0,
+          "used": 0.0
+        }
+      },
+      "contract_versions": {
+        "event_schema": "1.0",
+        "output_schema": "1.0",
+        "policy_version": "policy.m2-local",
+        "tool_versions": {
+          "sklearn": "1.7.2"
+        }
+      },
+      "created_at": "2026-08-02T06:29:42.226149Z",
+      "dataset_version_id": "dsv_000000000001",
+      "latest_output_refs": [
+        {
+          "href": "/v1/runs/run_000000000001/outputs/out_000000000009",
+          "output_id": "out_000000000009",
+          "state": "FINAL",
+          "type": "RUN_REPORT"
+        }
+      ],
+      "links": {
+        "events": "/v1/runs/run_000000000001/events",
+        "outputs": "/v1/runs/run_000000000001/outputs",
+        "result": "/v1/runs/run_000000000001/result",
+        "self": "/v1/runs/run_000000000001"
+      },
+      "outcome": "SUCCEEDED",
+      "phase": "PACKAGE",
+      "plan_version": 1,
+      "progress": {
+        "completed_steps": 5,
+        "current_step": {
+          "code": "COMPLETED",
+          "message": "Run completed",
+          "title": "Run completed"
+        },
+        "estimate_revision": 1,
+        "percent": 100.0,
+        "plan_version": 1,
+        "total_steps": 5
+      },
+      "retained_from_seq": 1,
+      "run_id": "run_000000000001",
+      "run_revision": 3,
+      "snapshot_seq": 20,
+      "stages": [
+        {
+          "completed_at": "2026-08-02T06:29:43.285919Z",
+          "latest_output_refs": [],
+          "message": "ingest stage",
+          "phase": "INGEST",
+          "progress_percent": 100.0,
+          "started_at": "2026-08-02T06:29:43.285919Z",
+          "status": "COMPLETED"
+        },
+        {
+          "completed_at": "2026-08-02T06:29:43.285919Z",
+          "latest_output_refs": [],
+          "message": "profile stage",
+          "phase": "PROFILE",
+          "progress_percent": 100.0,
+          "started_at": "2026-08-02T06:29:43.285919Z",
+          "status": "COMPLETED"
+        },
+        {
+          "completed_at": "2026-08-02T06:29:43.285919Z",
+          "latest_output_refs": [],
+          "message": "plan stage",
+          "phase": "PLAN",
+          "progress_percent": 100.0,
+          "started_at": "2026-08-02T06:29:43.285919Z",
+          "status": "COMPLETED"
+        },
+        {
+          "completed_at": "2026-08-02T06:29:43.285919Z",
+          "latest_output_refs": [],
+          "message": "train stage",
+          "phase": "TRAIN",
+          "progress_percent": 100.0,
+          "started_at": "2026-08-02T06:29:43.285919Z",
+          "status": "COMPLETED"
+        },
+        {
+          "completed_at": "2026-08-02T06:29:43.285919Z",
+          "latest_output_refs": [],
+          "message": "evaluate stage",
+          "phase": "EVALUATE",
+          "progress_percent": 100.0,
+          "started_at": "2026-08-02T06:29:43.285919Z",
+          "status": "COMPLETED"
+        },
+        {
+          "completed_at": "2026-08-02T06:29:43.285919Z",
+          "latest_output_refs": [],
+          "message": "package stage",
+          "phase": "PACKAGE",
+          "progress_percent": 100.0,
+          "started_at": "2026-08-02T06:29:43.285919Z",
+          "status": "COMPLETED"
+        }
+      ],
+      "status": "TERMINAL",
+      "updated_at": "2026-08-02T06:29:43.285908Z",
+      "webhook_endpoint_ids": []
+    },
+    "schema_version": "1.0"
+  },
+  "headers": {
+    "content-length": "4475",
+    "content-type": "application/json",
+    "etag": "\"4143dc7f9ad64efa283ba15737b2d2d3b809b21e1be5cb8365b1dd5dd0ce6a85\""
+  },
+  "status_code": 200
+}
